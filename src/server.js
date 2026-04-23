@@ -30,12 +30,24 @@ cron.schedule('5 0 * * *', async () => {
 connectDB();
 
 const app = express();
+// ✅ ДАРАА — зөв
+const allowedOrigins = [
+  'https://khovdteatr-web-pied.vercel.app',
+  'http://localhost:3000', // локал dev-д ажиллуулахын тулд
+];
 
 app.use(cors({
-  origin: '*',
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], // ✅ PATCH нэмэгдсэн
-  allowedHeaders: ['Content-Type', 'Authorization']
+  origin: function (origin, callback) {
+    // origin байхгүй үед (Postman, curl) нэвтрүүл
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('CORS-оор зөвшөөрөгдөөгүй'));
+    }
+  },
+  credentials: true,  // ← энэ заавал байх ёстой!
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 // Body parser middleware
