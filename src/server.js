@@ -32,8 +32,7 @@ connectDB();
 const app = express();
 
 app.use(cors({
-  origin:[ 'http://localhost:3000',
-  'https://khovdteatr-web-pied.vercel.app/'],
+  origin: '*',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], // ✅ PATCH нэмэгдсэн
   allowedHeaders: ['Content-Type', 'Authorization']
