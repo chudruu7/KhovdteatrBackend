@@ -32,7 +32,8 @@ connectDB();
 const app = express();
 
 app.use(cors({
-  origin: 'http://localhost:3000',
+  origin:[ 'http://localhost:3000',
+  'https://khovdteatr-web-pied.vercel.app/'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], // ✅ PATCH нэмэгдсэн
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -83,10 +84,9 @@ app.use((err, req, res, next) => {
 });
 cancelExpiredBookings();
 setInterval(cancelExpiredBookings, 5 * 60 * 1000);
-const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => {
-  console.log(`🚀 Сервер http://localhost:${PORT} дээр ажиллаж эхэллээ`);
+const PORT = process.env.PORT || 5000; // Render өөрийн PORT-ыг энд дамжуулдаг
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server is running on port ${PORT}`);
   console.log('Бүртгэгдсэн route-ууд:');
   console.log('- /api/movies');
   console.log('- /api/auth');
