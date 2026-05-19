@@ -106,6 +106,10 @@ router.post('/login', async (req, res) => {
 });
 
 // Хэрэглэгчийн мэдээлэл авах
+router.get('/me', protect, async (req, res) => {
+  res.json({ success: true, user: req.user });
+});
+
 router.get('/profile/:id', async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select('-password');

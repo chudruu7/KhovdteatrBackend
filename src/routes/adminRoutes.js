@@ -9,6 +9,8 @@ import {
     getUpcomingMovies,
     getAlerts,
     getSparklines,
+    getUsers,
+    deleteUser,
 } from '../controllers/adminController.js';
 import { protect, admin } from '../middleware/authMiddleware.js';
 
@@ -35,5 +37,8 @@ router.get('/upcoming-movies', getUpcomingMovies);
 
 // Мэдэгдлүүд
 router.get('/alerts', getAlerts);
+
+router.get('/users', getUsers);
+router.delete('/users/:id', deleteUser);
 
 export default router;

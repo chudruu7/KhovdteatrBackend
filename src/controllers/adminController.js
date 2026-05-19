@@ -263,10 +263,6 @@ export const getRecentShowtimes = async (req, res) => {
   }
 };
 
-// ================================================
-// СҮҮЛИЙН ЗАХИАЛГУУД
-// ================================================
-
 export const getRecentBookings = async (req, res) => {
   try {
     const bookings = await Booking.find()
@@ -502,5 +498,52 @@ export const getSparklines = async (req, res) => {
   } catch (error) {
     console.error('getSparklines error:', error);
     return res.status(500).json({ message: 'Серверийн алдаа гарлаа' });
+  }
+};
+
+export const getUsers = async (req, res) => {
+  try {
+    const users = await User.find()
+      .select('-password')
+      .sort({ createdAt: -1 });
+
+    return res.json({
+      success: true,
+      users: users.map(user => ({
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone || '',
+        role: user.role,
+        avatarUrl: user.avatarUrl || '',
+        membershipLevel: user.membershipLevel,
+        points: user.points || 0,
+        createdAt: user.createdAt,
+      })),
+    });
+  } catch (error) {
+    console.error('getUsers error:', error);
+    return res.status(500).json({ success: false, message: 'Хэрэглэгчдийн мэдээлэл авахад алдаа гарлаа' });
+  }
+};
+
+export const deleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (String(req.user._id) === String(id)) {
+      return res.status(400).json({ success: false, message: 'Өөрийн admin бүртгэлийг устгах боломжгүй.' });
+    }
+
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Хэрэглэгч олдсонгүй.' });
+    }
+
+    await User.findByIdAndDelete(id);
+    return res.json({ success: true, message: 'Хэрэглэгч амжилттай устгагдлаа.' });
+  } catch (error) {
+    console.error('deleteUser error:', error);
+    return res.status(500).json({ success: false, message: 'Хэрэглэгч устгахад алдаа гарлаа' });
   }
 };
