@@ -4,6 +4,50 @@ import Schedule from '../models/Schedule.js';
 import mongoose from 'mongoose';
 import { sendBookingConfirmation } from '../services/Emailservice.js';
 
+const THEATER_TIME_ZONE = 'Asia/Hovd';
+
+const formatTheaterDateTime = (value) => {
+  if (!value) return { dateISO: '', date: '', time: '' };
+
+  const date = new Date(value);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: THEATER_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date).reduce((acc, part) => {
+    if (part.type !== 'literal') acc[part.type] = part.value;
+    return acc;
+  }, {});
+
+  return {
+    dateISO: `${parts.year}-${parts.month}-${parts.day}`,
+    date: date.toLocaleDateString('mn-MN', { timeZone: THEATER_TIME_ZONE }),
+    time: `${parts.hour}:${parts.minute}`,
+  };
+};
+
+const markExpiredActiveBookings = async () => {
+  const now = new Date();
+  const deleteAfter = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const activeBookings = await Booking.find({ status: 'active' }).populate('schedule', 'showTime');
+  const expiredIds = activeBookings
+    .filter((booking) => booking.schedule?.showTime && new Date(booking.schedule.showTime) < now)
+    .map((booking) => booking._id);
+
+  if (!expiredIds.length) return 0;
+
+  const result = await Booking.updateMany(
+    { _id: { $in: expiredIds } },
+    { $set: { status: 'used', expiredAt: deleteAfter } }
+  );
+
+  return result.modifiedCount || 0;
+};
+
 // ── Helper: scheduleId олох ───────────────────────────────────────────────────
 async function resolveScheduleId(scheduleId, movieId, date, time, session) {
   if (scheduleId) return scheduleId;
@@ -171,6 +215,8 @@ export const getBookingDetails = async (req, res) => {
 // @route GET /api/bookings
 export const getAllBookings = async (req, res) => {
   try {
+    await markExpiredActiveBookings();
+
     const bookings = await Booking.find()
       .populate('movie', 'title posterUrl')
       .populate('schedule', 'showTime hall')
@@ -178,15 +224,16 @@ export const getAllBookings = async (req, res) => {
 
     const formatted = bookings.map(b => {
       const showTime = b.schedule?.showTime ? new Date(b.schedule.showTime) : null;
-      const mnTime   = showTime?.toLocaleTimeString('mn-MN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Ulaanbaatar' }) || '';
-      const mnDate   = showTime?.toLocaleDateString('mn-MN', { timeZone: 'Asia/Ulaanbaatar' }) || '';
+      const showDateTime = formatTheaterDateTime(showTime);
 
       return {
         _id:           b._id,
         movieTitle:    b.movie?.title       || 'Тодорхойгүй',
         moviePoster:   b.movie?.posterUrl   || '',
-        date:          mnDate,
-        time:          mnTime,
+        date:          showDateTime.date,
+        dateISO:       showDateTime.dateISO,
+        time:          showDateTime.time,
+        showDatetime:  showTime?.toISOString() || null,
         hall:          b.schedule?.hall?.hallName || '—',
         userName:      b.customer?.name    || 'Зочин',
         userEmail:     b.customer?.email   || '',
@@ -210,6 +257,8 @@ export const getAllBookings = async (req, res) => {
 // @route GET /api/bookings/stats
 export const getBookingStats = async (req, res) => {
   try {
+    await markExpiredActiveBookings();
+
     const [total, active, used, cancelled] = await Promise.all([
       Booking.countDocuments(),
       Booking.countDocuments({ status: 'active' }),

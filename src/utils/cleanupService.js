@@ -8,6 +8,7 @@ const DAYS_THRESHOLD = 14;
 export const autoCleanupExpiredTickets = async () => {
   try {
     const now = new Date();
+    const deleteAfter = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
     // Schedule populate хийж showTime-аар шалгана
     const activeBookings = await Booking.find({ status: 'active' })
@@ -21,7 +22,7 @@ export const autoCleanupExpiredTickets = async () => {
     if (expiredIds.length > 0) {
       const updated = await Booking.updateMany(
         { _id: { $in: expiredIds } },
-        { $set: { status: 'used', expiredAt: now } }
+        { $set: { status: 'used', expiredAt: deleteAfter } }
       );
       updatedCount = updated.modifiedCount;
       console.log(`[Cleanup] ${updatedCount} тасалбар used болгогдлоо`);
