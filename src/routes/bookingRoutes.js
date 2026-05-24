@@ -6,6 +6,7 @@ import {
   getAllBookings,
   getBookingStats,
   getMyHistory, 
+  verifyBookingStatus,
   cancelBooking,
   confirmBooking
 } from '../controllers/bookingController.js';
@@ -15,6 +16,7 @@ import { protect, admin } from '../middleware/authMiddleware.js';
 const router = express.Router();
 
 // ✅ Тогтмол route-ууд ЭХЭЛЖ — /:id-аас өмнө заавал байх ёстой
+router.get('/verify/:bookingId', verifyBookingStatus);
 router.get('/my-history', protect, getMyHistory); 
 router.get   ('/stats',          protect, getBookingStats);
 router.get   ('/',               protect, getAllBookings);

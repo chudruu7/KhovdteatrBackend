@@ -36,11 +36,32 @@ const getPopulatedMovie = (booking) => {
   return null;
 };
 
+const getFrontendUrl = () => (
+  process.env.FRONTEND_URL ||
+  process.env.CLIENT_URL ||
+  'https://khovdteatr-web-pied.vercel.app'
+).replace(/\/$/, '');
+
+const getTicketStatus = (booking, showTime) => {
+  if (booking.status !== 'active') {
+    return { isActive: false, label: 'Идэвхгүй', reason: booking.status === 'used' ? 'Ашигласан тасалбар' : 'Цуцлагдсан тасалбар' };
+  }
+  if (booking.payment?.status !== 'paid') {
+    return { isActive: false, label: 'Идэвхгүй', reason: 'Төлбөр баталгаажаагүй' };
+  }
+  if (showTime && showTime.getTime() < Date.now()) {
+    return { isActive: false, label: 'Идэвхгүй', reason: 'Үзвэрийн цаг өнгөрсөн' };
+  }
+  return { isActive: true, label: 'Идэвхтэй', reason: 'Нэвтрүүлэх боломжтой' };
+};
+
 const formatBookingForClient = (booking) => {
   const movie = getPopulatedMovie(booking);
   const showTime = booking.schedule?.showTime ? new Date(booking.schedule.showTime) : null;
   const showDateTime = formatTheaterDateTime(showTime);
   const bookingCode = String(booking._id);
+  const ticketStatus = getTicketStatus(booking, showTime);
+  const verifyUrl = `${getFrontendUrl()}/ticket-verify/${bookingCode}`;
 
   const formatted = {
     id:            booking._id,
@@ -64,22 +85,14 @@ const formatBookingForClient = (booking) => {
     customerEmail: booking.customer?.email || '',
     customerPhone: booking.customer?.phone || '',
     createdAt:     booking.createdAt,
+    ticketStatus,
+    verifyUrl,
   };
 
   formatted.qrPayload = JSON.stringify({
+    type: 'KDT_TICKET_VERIFY',
     bookingCode,
-    movie: formatted.movieTitle,
-    date: formatted.date,
-    time: formatted.time,
-    hall: formatted.hall,
-    seats: formatted.seats,
-    totalPrice: formatted.totalPrice,
-    paymentStatus: formatted.paymentStatus,
-    customer: {
-      name: formatted.customerName,
-      email: formatted.customerEmail,
-      phone: formatted.customerPhone,
-    },
+    verifyUrl,
   });
 
   return formatted;
@@ -298,6 +311,38 @@ export const getBookingDetails = async (req, res) => {
     return res.json({ success: true, booking: formatBookingForClient(booking) });
   } catch (err) {
     return res.status(500).json({ message: 'Захиалгын мэдээлэл авах алдаа.', error: err.message });
+  }
+};
+
+export const verifyBookingStatus = async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.bookingId)
+      .populate('movie', 'title posterUrl')
+      .populate({
+        path: 'schedule',
+        select: 'showTime hall movie',
+        populate: { path: 'movie', select: 'title posterUrl' },
+      });
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        isActive: false,
+        label: 'Идэвхгүй',
+        reason: 'Тасалбар олдсонгүй',
+      });
+    }
+
+    const formatted = formatBookingForClient(booking);
+    return res.json({
+      success: true,
+      isActive: formatted.ticketStatus.isActive,
+      label: formatted.ticketStatus.label,
+      reason: formatted.ticketStatus.reason,
+      booking: formatted,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Тасалбар шалгахад алдаа гарлаа', error: err.message });
   }
 };
 
