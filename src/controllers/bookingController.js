@@ -30,6 +30,61 @@ const formatTheaterDateTime = (value) => {
   };
 };
 
+const getPopulatedMovie = (booking) => {
+  if (booking.movie?.title) return booking.movie;
+  if (booking.schedule?.movie?.title) return booking.schedule.movie;
+  return null;
+};
+
+const formatBookingForClient = (booking) => {
+  const movie = getPopulatedMovie(booking);
+  const showTime = booking.schedule?.showTime ? new Date(booking.schedule.showTime) : null;
+  const showDateTime = formatTheaterDateTime(showTime);
+  const bookingCode = String(booking._id);
+
+  const formatted = {
+    id:            booking._id,
+    _id:           booking._id,
+    bookingCode,
+    title:         movie?.title || 'Тодорхойгүй кино',
+    movieTitle:    movie?.title || 'Тодорхойгүй кино',
+    posterUrl:     movie?.posterUrl || '',
+    date:          showDateTime.date,
+    dateISO:       showDateTime.dateISO,
+    time:          showDateTime.time,
+    showDatetime:  showTime?.toISOString() || null,
+    hall:          booking.schedule?.hall?.hallName || '—',
+    seats:         booking.seats || [],
+    totalPrice:    booking.totalPrice || 0,
+    status:        booking.status,
+    paymentStatus: booking.payment?.status || 'pending',
+    paymentMethod: booking.payment?.method || '',
+    transactionId: booking.payment?.transactionId || '',
+    customerName:  booking.customer?.name || '',
+    customerEmail: booking.customer?.email || '',
+    customerPhone: booking.customer?.phone || '',
+    createdAt:     booking.createdAt,
+  };
+
+  formatted.qrPayload = JSON.stringify({
+    bookingCode,
+    movie: formatted.movieTitle,
+    date: formatted.date,
+    time: formatted.time,
+    hall: formatted.hall,
+    seats: formatted.seats,
+    totalPrice: formatted.totalPrice,
+    paymentStatus: formatted.paymentStatus,
+    customer: {
+      name: formatted.customerName,
+      email: formatted.customerEmail,
+      phone: formatted.customerPhone,
+    },
+  });
+
+  return formatted;
+};
+
 const markExpiredActiveBookings = async () => {
   const now = new Date();
   const deleteAfter = new Date(now.getTime() + 24 * 60 * 60 * 1000);
@@ -112,9 +167,17 @@ export const createBooking = async (req, res) => {
     }
 
     // Суудлыг атомик байдлаар нөөцлөх
+    if (!schedule.showTime || new Date(schedule.showTime).getTime() <= Date.now()) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        message: 'Энэ үзвэрийн цаг өнгөрсөн тул тасалбар захиалах боломжгүй.',
+      });
+    }
+
     const updated = await Schedule.findOneAndUpdate(
       {
         _id: resolvedScheduleId,
+        showTime: { $gt: new Date() },
         soldSeats: { $not: { $elemMatch: { $in: selectedSeats } } }
       },
       { $push: { soldSeats: { $each: selectedSeats } } },
@@ -174,6 +237,23 @@ export const confirmBooking = async (req, res) => {
     const booking = await Booking.findById(req.params.id).populate('schedule');
     if (!booking) return res.status(404).json({ message: 'Захиалга олдсонгүй' });
 
+    if (!booking.schedule?.showTime || new Date(booking.schedule.showTime).getTime() <= Date.now()) {
+      booking.payment.status = 'cancelled';
+      booking.status = 'cancelled';
+      await booking.save();
+
+      if (booking.schedule && booking.seats?.length) {
+        await Schedule.findByIdAndUpdate(booking.schedule._id, {
+          $pull: { soldSeats: { $in: booking.seats } },
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        message: 'Энэ үзвэрийн цаг өнгөрсөн тул тасалбар баталгаажуулах боломжгүй.',
+      });
+    }
+
     booking.payment.status  = 'paid';
     booking.payment.method  = 'qpay';
     booking.status          = 'active';
@@ -202,10 +282,20 @@ export const getBookingDetails = async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.bookingId)
       .populate('movie', 'title posterUrl')
-      .populate('schedule');
+      .populate({
+        path: 'schedule',
+        select: 'showTime hall movie',
+        populate: { path: 'movie', select: 'title posterUrl' },
+      });
 
     if (!booking) return res.status(404).json({ message: 'Захиалга олдсонгүй.' });
-    return res.json(booking);
+
+    const isOwner = booking.userId && req.user?._id && String(booking.userId) === String(req.user._id);
+    if (req.user?.role !== 'admin' && !isOwner) {
+      return res.status(403).json({ message: 'Энэ захиалгын мэдээллийг харах эрхгүй байна.' });
+    }
+
+    return res.json({ success: true, booking: formatBookingForClient(booking) });
   } catch (err) {
     return res.status(500).json({ message: 'Захиалгын мэдээлэл авах алдаа.', error: err.message });
   }
@@ -329,30 +419,14 @@ export const getMyHistory = async (req, res) => {
 
     const bookings = await Booking.find({ userId })
       .populate('movie', 'title posterUrl')
-      .populate('schedule', 'showTime hall')
+      .populate({
+        path: 'schedule',
+        select: 'showTime hall movie',
+        populate: { path: 'movie', select: 'title posterUrl' },
+      })
       .sort({ createdAt: -1 });
 
-    const formatted = bookings.map(b => {
-      const showTime = b.schedule?.showTime ? new Date(b.schedule.showTime) : null;
-      const mnDate = showTime?.toLocaleDateString('mn-MN', { timeZone: 'Asia/Ulaanbaatar' }) || '';
-      const mnTime = showTime?.toLocaleTimeString('mn-MN', {
-        hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Ulaanbaatar'
-      }) || '';
-
-      return {
-        id:            b._id,
-        title:         b.movie?.title || 'Тодорхойгүй',
-        posterUrl:     b.movie?.posterUrl || '',
-        date:          mnDate,
-        time:          mnTime,
-        hall:          b.schedule?.hall?.hallName || '—',
-        seats:         b.seats || [],
-        totalPrice:    b.totalPrice || 0,
-        status:        b.status,
-        paymentStatus: b.payment?.status,
-        createdAt:     b.createdAt,
-      };
-    });
+    const formatted = bookings.map(formatBookingForClient);
 
     res.json({ success: true, bookings: formatted });
   } catch (err) {
