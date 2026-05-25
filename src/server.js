@@ -30,16 +30,48 @@ cron.schedule('5 0 * * *', async () => {
 connectDB();
 
 const app = express();
-// ✅ ДАРАА — зөв
-const allowedOrigins = [
+const defaultAllowedOrigins = [
   'https://khovdteatr-web-pied.vercel.app',
-  'http://localhost:3000', // локал dev-д ажиллуулахын тулд
+  'http://localhost:3000',
+  'http://localhost:8081',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:8081',
+  'http://127.0.0.1:5173',
+  'http://localhost:19006',
+  'http://127.0.0.1:19006',
 ];
+
+const configuredAllowedOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedOrigins = new Set([
+  ...defaultAllowedOrigins,
+  ...configuredAllowedOrigins,
+]);
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+  if (allowedOrigins.has(origin)) return true;
+
+  try {
+    const { protocol, hostname } = new URL(origin);
+    if (protocol === 'http:' && ['localhost', '127.0.0.1'].includes(hostname)) {
+      return true;
+    }
+
+    return protocol === 'https:' && hostname.endsWith('.vercel.app');
+  } catch {
+    return false;
+  }
+};
 
 app.use(cors({
   origin: function (origin, callback) {
     // origin байхгүй үед (Postman, curl) нэвтрүүл
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (isAllowedOrigin(origin)) {
       callback(null, true);
     } else {
       callback(new Error('CORS-оор зөвшөөрөгдөөгүй'));
