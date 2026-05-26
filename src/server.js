@@ -79,7 +79,7 @@ app.use(cors({
     }
   },
   credentials: true,  // ← энэ заавал байх ёстой!
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
