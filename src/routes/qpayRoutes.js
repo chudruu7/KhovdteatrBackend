@@ -5,6 +5,7 @@ import {
   checkPayment,
   handleCallback,
   cancelInvoice,
+  completeTestPayment,
   createEbarimtHandler,
   cancelPaymentHandler,
 } from '../controllers/qpayController.js';
@@ -14,10 +15,7 @@ const router = express.Router();
 // Invoice
 router.post  ('/invoice',                createInvoice);        // Нэхэмжлэл үүсгэх
 router.delete('/invoice/:invoiceId',     cancelInvoice);        // Нэхэмжлэл цуцлах
-router.post('/test-complete/:invoiceId', async (req, res) => {
-  // Booking-ийг manual PAID болгох
-  res.json({ success: true, paid: true });
-});
+router.post('/test-complete/:invoiceId', completeTestPayment);
 // Payment
 router.get   ('/payment/:invoiceId',     checkPayment);         // Төлбөр шалгах
 router.delete('/payment/:paymentId',     cancelPaymentHandler); // Төлбөр буцаах

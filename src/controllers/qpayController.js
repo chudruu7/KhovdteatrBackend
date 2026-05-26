@@ -6,6 +6,76 @@ import {
   createEbarimt,
   cancelPayment,
 } from '../services/qpayService.js';
+import Booking from '../models/Booking.js';
+
+const findBookingForInvoice = async ({ invoiceId, bookingId }) => {
+  if (bookingId) {
+    const booking = await Booking.findById(bookingId).populate('schedule');
+    if (booking) return booking;
+  }
+
+  if (invoiceId) {
+    return Booking.findOne({ 'payment.transactionId': String(invoiceId) }).populate('schedule');
+  }
+
+  return null;
+};
+
+export const completeTestPayment = async (req, res) => {
+  try {
+    const { invoiceId } = req.params;
+    const { bookingId } = req.body || {};
+    const booking = await markBookingPaid({
+      invoiceId,
+      bookingId,
+      paymentId: `TEST-${Date.now()}`,
+    });
+
+    return res.json({
+      success: true,
+      paid: true,
+      data: {
+        paid: true,
+        status: 'PAID',
+        invoiceId,
+        bookingId: String(booking._id),
+      },
+    });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({
+      success: false,
+      paid: false,
+      message: err.message || 'Тест төлбөр баталгаажуулахад алдаа гарлаа.',
+    });
+  }
+};
+
+const markBookingPaid = async ({ invoiceId, bookingId, paymentId = null }) => {
+  const booking = await findBookingForInvoice({ invoiceId, bookingId });
+  if (!booking) {
+    const err = new Error('Захиалга олдсонгүй.');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if (!booking.schedule?.showTime || new Date(booking.schedule.showTime).getTime() <= Date.now()) {
+    booking.payment.status = 'failed';
+    booking.status = 'cancelled';
+    await booking.save();
+
+    const err = new Error('Энэ үзвэрийн цаг өнгөрсөн тул төлбөр баталгаажуулах боломжгүй.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  booking.payment.status = 'paid';
+  booking.payment.method = 'qpay';
+  booking.payment.transactionId = paymentId || invoiceId || booking.payment.transactionId;
+  booking.status = 'active';
+  await booking.save();
+
+  return booking;
+};
 
 // ── 1. Invoice үүсгэх ─────────────────────────────────────────────────────────
 export const createInvoice = async (req, res) => {
@@ -16,6 +86,13 @@ export const createInvoice = async (req, res) => {
       return res.status(400).json({ success: false, message: 'bookingId болон amount шаардлагатай' });
 
     const invoice = await createCinemaInvoice({ bookingId, amount, seats, movieTitle });
+    await Booking.findByIdAndUpdate(bookingId, {
+      $set: {
+        'payment.method': 'qpay',
+        'payment.status': 'pending',
+        'payment.transactionId': invoice.invoiceId,
+      },
+    });
     return res.status(201).json({ success: true, data: invoice });
   } catch (err) {
     console.error('[QPay] Invoice алдаа:', err);
@@ -32,6 +109,13 @@ export const checkPayment = async (req, res) => {
       return res.status(400).json({ success: false, message: 'invoiceId шаардлагатай' });
 
     const result = await checkPaymentStatus(invoiceId);
+    if (result.paid) {
+      try {
+        await markBookingPaid({ invoiceId, paymentId: result.payments?.[0]?.payment_id });
+      } catch (err) {
+        console.warn('[QPay] Paid invoice booking update warning:', err.message);
+      }
+    }
     return res.status(200).json({ success: true, data: result });
   } catch (err) {
     console.error('[QPay] Төлбөр шалгах алдаа:', err);

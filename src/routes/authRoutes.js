@@ -114,6 +114,7 @@ router.post('/social-login', async (req, res) => {
     const { name, email, avatarUrl, provider, providerId } = req.body;
     const normalizedProvider = String(provider || '').trim().toLowerCase();
     const normalizedEmail = String(email || '').trim().toLowerCase();
+    const isGoogleProvider = ['google', 'google.com'].includes(normalizedProvider);
 
     if (!normalizedEmail || !providerId || !normalizedProvider) {
       return res.status(400).json({
@@ -122,7 +123,7 @@ router.post('/social-login', async (req, res) => {
       });
     }
 
-    if (normalizedProvider !== 'google') {
+    if (!isGoogleProvider) {
       return res.status(400).json({
         success: false,
         message: 'Зөвхөн Google/Gmail бүртгэлээр нэвтрэх боломжтой.',
@@ -137,10 +138,11 @@ router.post('/social-login', async (req, res) => {
     }
 
     let user = await User.findOne({ email: normalizedEmail });
+    const fallbackPassword = `${normalizedProvider}:${providerId}`;
 
     if (!user) {
       const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(`${normalizedProvider}:${providerId}`, salt);
+      const hashedPassword = await bcrypt.hash(fallbackPassword, salt);
       user = new User({
         name: name || 'Хэрэглэгч',
         email: normalizedEmail,
@@ -150,16 +152,20 @@ router.post('/social-login', async (req, res) => {
       });
       await user.save();
     } else {
-      let changed = false;
+      const update = {};
       if (name && user.name !== name) {
-        user.name = name;
-        changed = true;
+        update.name = name;
       }
       if (avatarUrl && user.avatarUrl !== avatarUrl) {
-        user.avatarUrl = avatarUrl;
-        changed = true;
+        update.avatarUrl = avatarUrl;
       }
-      if (changed) await user.save();
+      if (!user.password) {
+        const salt = await bcrypt.genSalt(10);
+        update.password = await bcrypt.hash(fallbackPassword, salt);
+      }
+      if (Object.keys(update).length > 0) {
+        user = await User.findByIdAndUpdate(user._id, update, { new: true });
+      }
     }
 
     return res.json({
