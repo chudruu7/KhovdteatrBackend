@@ -16,6 +16,7 @@ import adminRoutes from './routes/adminRoutes.js'; // ЭНЭ МӨРИЙГ НЭМ
 import newsRoutes from './routes/newsRoutes.js'; // ЭНЭ МӨРИЙГ НЭМЭХ
 import cinemaInfoRoutes from './routes/cinemaInfoRoutes.js'; // ЭНЭ МӨРИЙГ НЭМЭХ
 import cleanupRoutes from './routes/cleanupRoutes.js';
+import cashierRoutes from './routes/cashierRoutes.js';
 import { cancelExpiredBookings } from './controllers/bookingController.js';
 import { autoCleanupExpiredTickets, requestCleanupApproval } from './utils/cleanupService.js';
 import cron from 'node-cron';
@@ -99,6 +100,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/admin', adminRoutes); // ЭНЭ МӨРИЙГ НЭМЭХ
+app.use('/api/cashier', cashierRoutes);
 app.use('/api/news', newsRoutes); // ЭНЭ МӨРИЙГ НЭМЭХ
 app.use('/api/cinema-info', cinemaInfoRoutes); // ЭНЭ МӨРИЙГ НЭМЭХ
 app.use('/api/cleanup', cleanupRoutes);

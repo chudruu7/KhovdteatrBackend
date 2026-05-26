@@ -11,6 +11,7 @@ import {
     getSparklines,
     getUsers,
     deleteUser,
+    updateUserRole,
 } from '../controllers/adminController.js';
 import { protect, admin } from '../middleware/authMiddleware.js';
 
@@ -39,6 +40,7 @@ router.get('/upcoming-movies', getUpcomingMovies);
 router.get('/alerts', getAlerts);
 
 router.get('/users', getUsers);
+router.patch('/users/:id/role', updateUserRole);
 router.delete('/users/:id', deleteUser);
 
 export default router;

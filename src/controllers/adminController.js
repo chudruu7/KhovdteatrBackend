@@ -547,3 +547,47 @@ export const deleteUser = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Хэрэглэгч устгахад алдаа гарлаа' });
   }
 };
+
+export const updateUserRole = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { role } = req.body;
+    const allowedRoles = ['user', 'admin', 'cashier'];
+
+    if (!allowedRoles.includes(role)) {
+      return res.status(400).json({ success: false, message: 'Эрхийн төрөл буруу байна.' });
+    }
+
+    if (String(req.user._id) === String(id) && role !== 'admin') {
+      return res.status(400).json({ success: false, message: 'Өөрийн admin эрхийг бууруулах боломжгүй.' });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      id,
+      { role },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Хэрэглэгч олдсонгүй.' });
+    }
+
+    return res.json({
+      success: true,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone || '',
+        role: user.role,
+        avatarUrl: user.avatarUrl || '',
+        membershipLevel: user.membershipLevel,
+        points: user.points || 0,
+        createdAt: user.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error('updateUserRole error:', error);
+    return res.status(500).json({ success: false, message: 'Хэрэглэгчийн эрх шинэчлэхэд алдаа гарлаа' });
+  }
+};
