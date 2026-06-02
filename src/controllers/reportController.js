@@ -1,52 +1,62 @@
-// ================================================================
-// reportController.js
-// Байршил: backend/src/controllers/reportController.js
-// ================================================================
-
-import Booking  from '../models/Booking.js';
-import Movie    from '../models/Movie.js';
+import Booking from '../models/Booking.js';
+import Movie from '../models/Movie.js';
 import Schedule from '../models/Schedule.js';
-import User     from '../models/User.js';
+import User from '../models/User.js';
 
-// ─── Туслах: огноон хязгаар ────────────────────────────────
+const paidMatch = {
+  status: { $in: ['active', 'used', 'confirmed'] },
+  $or: [
+    { 'payment.status': 'paid' },
+    { 'payment.status': { $exists: false } },
+    { payment: null },
+  ],
+};
+
 function getDateRange(query) {
-  const now   = new Date();
+  const now = new Date();
   const start = query.startDate ? new Date(query.startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
-  const end   = query.endDate   ? new Date(query.endDate)   : now;
+  const end = query.endDate ? new Date(query.endDate) : now;
   end.setHours(23, 59, 59, 999);
   return { start, end };
 }
 
-// ================================================================
-// 1. САНХҮҮГИЙН ТАЙЛАН
-// ================================================================
+const dateMatch = (query, field = 'createdAt') => {
+  const { start, end } = getDateRange(query);
+  return { [field]: { $gte: start, $lte: end } };
+};
+
+const ticketCountExpr = { $size: { $ifNull: ['$seats', []] } };
+const revenueExpr = { $ifNull: ['$totalPrice', '$totalAmount'] };
+const movieExpr = { $ifNull: ['$movie', '$movieId'] };
+const scheduleExpr = { $ifNull: ['$schedule', '$scheduleId'] };
+const paymentMethodExpr = { $ifNull: ['$payment.method', { $ifNull: ['$paymentMethod', 'other'] }] };
+
 export const dailySales = async (req, res) => {
   try {
-    const { start, end } = getDateRange(req.query);
     const data = await Booking.aggregate([
-      { $match: { status: 'confirmed', createdAt: { $gte: start, $lte: end } } },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
       {
         $group: {
           _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-          totalRevenue:   { $sum: '$totalAmount' },
-          ticketCount:    { $sum: { $size: { $ifNull: ['$seats', []] } } },
-          bookingCount:   { $sum: 1 },
-          avgTicketPrice: { $avg: '$totalAmount' },
+          totalRevenue: { $sum: revenueExpr },
+          ticketCount: { $sum: ticketCountExpr },
+          bookingCount: { $sum: 1 },
         },
       },
       { $sort: { _id: 1 } },
     ]);
+    const rows = data.map((row) => ({
+      ...row,
+      avgTicketPrice: row.ticketCount ? row.totalRevenue / row.ticketCount : 0,
+    }));
 
-    const summary = data.reduce(
-      (acc, d) => ({
-        totalRevenue:  acc.totalRevenue  + d.totalRevenue,
-        ticketCount:   acc.ticketCount   + d.ticketCount,
-        bookingCount:  acc.bookingCount  + d.bookingCount,
-      }),
-      { totalRevenue: 0, ticketCount: 0, bookingCount: 0 }
-    );
+    const summary = rows.reduce((acc, row) => ({
+      totalRevenue: acc.totalRevenue + (row.totalRevenue || 0),
+      ticketCount: acc.ticketCount + (row.ticketCount || 0),
+      bookingCount: acc.bookingCount + (row.bookingCount || 0),
+    }), { totalRevenue: 0, ticketCount: 0, bookingCount: 0 });
 
-    res.json({ success: true, data, summary });
+    res.json({ success: true, data: rows, summary });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -54,30 +64,28 @@ export const dailySales = async (req, res) => {
 
 export const monthlySales = async (req, res) => {
   try {
-    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const year = parseInt(req.query.year, 10) || new Date().getFullYear();
     const data = await Booking.aggregate([
       {
         $match: {
-          status: 'confirmed',
-          createdAt: { $gte: new Date(`${year}-01-01`), $lte: new Date(`${year}-12-31`) },
+          ...paidMatch,
+          createdAt: { $gte: new Date(`${year}-01-01T00:00:00.000Z`), $lte: new Date(`${year}-12-31T23:59:59.999Z`) },
         },
       },
       {
         $group: {
-          _id:          { $month: '$createdAt' },
-          totalRevenue: { $sum: '$totalAmount' },
-          ticketCount:  { $sum: { $size: { $ifNull: ['$seats', []] } } },
+          _id: { $month: '$createdAt' },
+          totalRevenue: { $sum: revenueExpr },
+          ticketCount: { $sum: ticketCountExpr },
           bookingCount: { $sum: 1 },
         },
       },
       { $sort: { _id: 1 } },
     ]);
 
-    const months = ['1-р сар','2-р сар','3-р сар','4-р сар','5-р сар','6-р сар',
-                    '7-р сар','8-р сар','9-р сар','10-р сар','11-р сар','12-р сар'];
-    const formatted = months.map((name, i) => {
-      const found = data.find(d => d._id === i + 1);
-      return { month: name, monthNum: i + 1, ...(found || { totalRevenue: 0, ticketCount: 0, bookingCount: 0 }) };
+    const formatted = Array.from({ length: 12 }, (_, i) => {
+      const found = data.find((row) => row._id === i + 1);
+      return { month: `${i + 1}-р сар`, monthNum: i + 1, totalRevenue: 0, ticketCount: 0, bookingCount: 0, ...(found || {}) };
     });
 
     res.json({ success: true, year, data: formatted });
@@ -88,23 +96,13 @@ export const monthlySales = async (req, res) => {
 
 export const paymentMethods = async (req, res) => {
   try {
-    const { start, end } = getDateRange(req.query);
     const data = await Booking.aggregate([
-      { $match: { status: 'confirmed', createdAt: { $gte: start, $lte: end } } },
-      {
-        $group: {
-          _id:          '$paymentMethod',
-          totalRevenue: { $sum: '$totalAmount' },
-          count:        { $sum: 1 },
-        },
-      },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
+      { $group: { _id: paymentMethodExpr, totalRevenue: { $sum: revenueExpr }, count: { $sum: 1 } } },
       { $sort: { totalRevenue: -1 } },
     ]);
-
-    const total  = data.reduce((s, d) => s + d.totalRevenue, 0);
-    const result = data.map(d => ({ ...d, percentage: total ? ((d.totalRevenue / total) * 100).toFixed(1) : 0 }));
-
-    res.json({ success: true, data: result, totalRevenue: total });
+    const totalRevenue = data.reduce((sum, row) => sum + (row.totalRevenue || 0), 0);
+    res.json({ success: true, data: data.map((row) => ({ ...row, percentage: totalRevenue ? ((row.totalRevenue / totalRevenue) * 100).toFixed(1) : 0 })), totalRevenue });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -112,57 +110,28 @@ export const paymentMethods = async (req, res) => {
 
 export const refunds = async (req, res) => {
   try {
-    const { start, end } = getDateRange(req.query);
     const data = await Booking.aggregate([
-      { $match: { status: 'cancelled', updatedAt: { $gte: start, $lte: end } } },
-      {
-        $group: {
-          _id:            '$cancellationReason',
-          refundedAmount: { $sum: '$totalAmount' },
-          count:          { $sum: 1 },
-        },
-      },
+      { $match: { status: 'cancelled', ...dateMatch(req.query, 'updatedAt') } },
+      { $group: { _id: { $ifNull: ['$cancellationReason', 'Тодорхойгүй'] }, refundedAmount: { $sum: revenueExpr }, count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]);
-
-    const totalRefunded = data.reduce((s, d) => s + d.refundedAmount, 0);
+    const totalRefunded = data.reduce((sum, row) => sum + (row.refundedAmount || 0), 0);
     res.json({ success: true, data, totalRefunded });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// ================================================================
-// 2. КИНО БА ҮЗЭЛТИЙН ТАЙЛАН
-// ================================================================
 export const movieViewership = async (req, res) => {
   try {
-    const { start, end } = getDateRange(req.query);
     const data = await Booking.aggregate([
-      { $match: { status: 'confirmed', createdAt: { $gte: start, $lte: end } } },
-      {
-        $group: {
-          _id:          '$movieId',
-          totalRevenue: { $sum: '$totalAmount' },
-          ticketCount:  { $sum: { $size: { $ifNull: ['$seats', []] } } },
-          bookingCount: { $sum: 1 },
-        },
-      },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
+      { $group: { _id: movieExpr, totalRevenue: { $sum: revenueExpr }, ticketCount: { $sum: ticketCountExpr }, bookingCount: { $sum: 1 } } },
       { $lookup: { from: 'movies', localField: '_id', foreignField: '_id', as: 'movie' } },
       { $unwind: { path: '$movie', preserveNullAndEmptyArrays: true } },
-      {
-        $project: {
-          movieTitle:   { $ifNull: ['$movie.title', 'Тодорхойгүй'] },
-          genre:        '$movie.genre',
-          poster:       '$movie.poster',
-          totalRevenue: 1,
-          ticketCount:  1,
-          bookingCount: 1,
-        },
-      },
+      { $project: { movieTitle: { $ifNull: ['$movie.title', 'Тодорхойгүй'] }, genre: '$movie.genre', poster: '$movie.posterUrl', totalRevenue: 1, ticketCount: 1, bookingCount: 1 } },
       { $sort: { totalRevenue: -1 } },
     ]);
-
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -171,34 +140,17 @@ export const movieViewership = async (req, res) => {
 
 export const topMovies = async (req, res) => {
   try {
-    const { start, end } = getDateRange(req.query);
-    const limit  = parseInt(req.query.limit) || 10;
+    const limit = parseInt(req.query.limit, 10) || 10;
     const sortBy = req.query.sortBy === 'tickets' ? 'ticketCount' : 'totalRevenue';
-
     const data = await Booking.aggregate([
-      { $match: { status: 'confirmed', createdAt: { $gte: start, $lte: end } } },
-      {
-        $group: {
-          _id:          '$movieId',
-          totalRevenue: { $sum: '$totalAmount' },
-          ticketCount:  { $sum: { $size: { $ifNull: ['$seats', []] } } },
-        },
-      },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
+      { $group: { _id: movieExpr, totalRevenue: { $sum: revenueExpr }, ticketCount: { $sum: ticketCountExpr }, bookingCount: { $sum: 1 } } },
       { $lookup: { from: 'movies', localField: '_id', foreignField: '_id', as: 'movie' } },
       { $unwind: { path: '$movie', preserveNullAndEmptyArrays: true } },
-      {
-        $project: {
-          movieTitle:   { $ifNull: ['$movie.title', 'Тодорхойгүй'] },
-          genre:        '$movie.genre',
-          poster:       '$movie.poster',
-          totalRevenue: 1,
-          ticketCount:  1,
-        },
-      },
+      { $project: { movieTitle: { $ifNull: ['$movie.title', 'Тодорхойгүй'] }, genre: '$movie.genre', poster: '$movie.posterUrl', totalRevenue: 1, ticketCount: 1, bookingCount: 1 } },
       { $sort: { [sortBy]: -1 } },
       { $limit: limit },
     ]);
-
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -207,32 +159,11 @@ export const topMovies = async (req, res) => {
 
 export const newReleases = async (req, res) => {
   try {
-    const days  = parseInt(req.query.days) || 14;
+    const days = parseInt(req.query.days, 10) || 14;
     const since = new Date();
     since.setDate(since.getDate() - days);
-
-    const movies   = await Movie.find({ releaseDate: { $gte: since } }).lean();
-    const movieIds = movies.map(m => m._id);
-
-    const stats = await Booking.aggregate([
-      { $match: { status: 'confirmed', movieId: { $in: movieIds } } },
-      {
-        $group: {
-          _id:          '$movieId',
-          totalRevenue: { $sum: '$totalAmount' },
-          ticketCount:  { $sum: { $size: { $ifNull: ['$seats', []] } } },
-        },
-      },
-    ]);
-
-    const statsMap = Object.fromEntries(stats.map(s => [String(s._id), s]));
-    const data = movies.map(m => ({
-      ...m,
-      totalRevenue: statsMap[String(m._id)]?.totalRevenue || 0,
-      ticketCount:  statsMap[String(m._id)]?.ticketCount  || 0,
-    }));
-
-    res.json({ success: true, data });
+    const movies = await Movie.find({ releaseDate: { $gte: since } }).lean();
+    res.json({ success: true, data: movies });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -240,60 +171,31 @@ export const newReleases = async (req, res) => {
 
 export const schedulePerformance = async (req, res) => {
   try {
-    const { start, end } = getDateRange(req.query);
     const data = await Booking.aggregate([
-      { $match: { status: 'confirmed', createdAt: { $gte: start, $lte: end } } },
-      {
-        $group: {
-          _id:          '$scheduleId',
-          totalRevenue: { $sum: '$totalAmount' },
-          ticketCount:  { $sum: { $size: { $ifNull: ['$seats', []] } } },
-        },
-      },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
+      { $group: { _id: scheduleExpr, totalRevenue: { $sum: revenueExpr }, ticketCount: { $sum: ticketCountExpr }, bookingCount: { $sum: 1 } } },
       { $lookup: { from: 'schedules', localField: '_id', foreignField: '_id', as: 'schedule' } },
       { $unwind: { path: '$schedule', preserveNullAndEmptyArrays: true } },
-      { $lookup: { from: 'movies', localField: 'schedule.movieId', foreignField: '_id', as: 'movie' } },
+      { $lookup: { from: 'movies', localField: 'schedule.movie', foreignField: '_id', as: 'movie' } },
       { $unwind: { path: '$movie', preserveNullAndEmptyArrays: true } },
-      {
-        $project: {
-          showTime:     '$schedule.showTime',
-          hall:         '$schedule.hall',
-          movieTitle:   { $ifNull: ['$movie.title', 'Тодорхойгүй'] },
-          totalRevenue: 1,
-          ticketCount:  1,
-        },
-      },
+      { $project: { showTime: '$schedule.showTime', hall: '$schedule.hall.hallName', movieTitle: { $ifNull: ['$movie.title', 'Тодорхойгүй'] }, totalRevenue: 1, ticketCount: 1, bookingCount: 1 } },
       { $sort: { totalRevenue: -1 } },
     ]);
-
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// ================================================================
-// 3. ТАСАЛБАР ЗАХИАЛГЫН ТАЙЛАН
-// ================================================================
 export const bookingChannels = async (req, res) => {
   try {
-    const { start, end } = getDateRange(req.query);
     const data = await Booking.aggregate([
-      { $match: { status: 'confirmed', createdAt: { $gte: start, $lte: end } } },
-      {
-        $group: {
-          _id:          { $ifNull: ['$bookingChannel', 'Бусад'] },
-          totalRevenue: { $sum: '$totalAmount' },
-          count:        { $sum: 1 },
-        },
-      },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
+      { $group: { _id: { $ifNull: ['$bookingChannel', 'Апп/Веб'] }, totalRevenue: { $sum: revenueExpr }, count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]);
-
-    const total  = data.reduce((s, d) => s + d.count, 0);
-    const result = data.map(d => ({ ...d, percentage: total ? ((d.count / total) * 100).toFixed(1) : 0 }));
-
-    res.json({ success: true, data: result, totalBookings: total });
+    const totalBookings = data.reduce((sum, row) => sum + row.count, 0);
+    res.json({ success: true, data: data.map((row) => ({ ...row, percentage: totalBookings ? ((row.count / totalBookings) * 100).toFixed(1) : 0 })), totalBookings });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -301,23 +203,11 @@ export const bookingChannels = async (req, res) => {
 
 export const advanceBooking = async (req, res) => {
   try {
-    const { start, end } = getDateRange(req.query);
     const data = await Booking.aggregate([
-      { $match: { status: 'confirmed', createdAt: { $gte: start, $lte: end } } },
-      { $lookup: { from: 'schedules', localField: 'scheduleId', foreignField: '_id', as: 'schedule' } },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
+      { $lookup: { from: 'schedules', localField: 'schedule', foreignField: '_id', as: 'schedule' } },
       { $unwind: { path: '$schedule', preserveNullAndEmptyArrays: true } },
-      {
-        $addFields: {
-          daysInAdvance: {
-            $floor: {
-              $divide: [
-                { $subtract: ['$schedule.showTime', '$createdAt'] },
-                1000 * 60 * 60 * 24,
-              ],
-            },
-          },
-        },
-      },
+      { $addFields: { daysInAdvance: { $floor: { $divide: [{ $subtract: ['$schedule.showTime', '$createdAt'] }, 86400000] } } } },
       {
         $group: {
           _id: {
@@ -330,13 +220,12 @@ export const advanceBooking = async (req, res) => {
               default: '7+ хоногийн өмнө',
             },
           },
-          count:        { $sum: 1 },
-          totalRevenue: { $sum: '$totalAmount' },
+          count: { $sum: 1 },
+          totalRevenue: { $sum: revenueExpr },
         },
       },
       { $sort: { count: -1 } },
     ]);
-
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -345,99 +234,35 @@ export const advanceBooking = async (req, res) => {
 
 export const seatTypes = async (req, res) => {
   try {
-    const { start, end } = getDateRange(req.query);
     const data = await Booking.aggregate([
-      { $match: { status: 'confirmed', createdAt: { $gte: start, $lte: end } } },
-      { $unwind: { path: '$seats', preserveNullAndEmptyArrays: true } },
-      {
-        $group: {
-          _id:          { $ifNull: ['$seats.type', 'Энгийн'] },
-          count:        { $sum: 1 },
-          totalRevenue: { $sum: { $ifNull: ['$seats.price', 0] } },
-        },
-      },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
+      { $unwind: { path: '$tickets', preserveNullAndEmptyArrays: true } },
+      { $group: { _id: { $ifNull: ['$tickets.type', 'adult'] }, count: { $sum: 1 }, totalRevenue: { $sum: { $ifNull: ['$tickets.price', 0] } } } },
       { $sort: { count: -1 } },
     ]);
-
-    const totalSeats = data.reduce((s, d) => s + d.count, 0);
-    const result     = data.map(d => ({ ...d, percentage: totalSeats ? ((d.count / totalSeats) * 100).toFixed(1) : 0 }));
-
-    res.json({ success: true, data: result, totalSeats });
+    const totalSeats = data.reduce((sum, row) => sum + row.count, 0);
+    res.json({ success: true, data: data.map((row) => ({ ...row, percentage: totalSeats ? ((row.count / totalSeats) * 100).toFixed(1) : 0 })), totalSeats });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };
 
 export const discounts = async (req, res) => {
-  try {
-    const { start, end } = getDateRange(req.query);
-    const data = await Booking.aggregate([
-      {
-        $match: {
-          status: 'confirmed',
-          createdAt: { $gte: start, $lte: end },
-          discountType: { $exists: true, $ne: null },
-        },
-      },
-      {
-        $group: {
-          _id:           '$discountType',
-          count:         { $sum: 1 },
-          totalDiscount: { $sum: { $ifNull: ['$discountAmount', 0] } },
-          totalRevenue:  { $sum: '$totalAmount' },
-        },
-      },
-      { $sort: { count: -1 } },
-    ]);
-
-    const totalDiscountGiven = data.reduce((s, d) => s + d.totalDiscount, 0);
-    res.json({ success: true, data, totalDiscountGiven });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
+  res.json({ success: true, data: [], totalDiscountGiven: 0 });
 };
 
-// ================================================================
-// 4. ТАНХИМ БА ДҮҮРГЭЛТИЙН ТАЙЛАН
-// ================================================================
 export const hallOccupancy = async (req, res) => {
   try {
-    const { start, end } = getDateRange(req.query);
     const data = await Booking.aggregate([
-      { $match: { status: 'confirmed', createdAt: { $gte: start, $lte: end } } },
-      {
-        $group: {
-          _id:          '$scheduleId',
-          soldSeats:    { $sum: { $size: { $ifNull: ['$seats', []] } } },
-          totalRevenue: { $sum: '$totalAmount' },
-        },
-      },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
+      { $group: { _id: scheduleExpr, soldSeats: { $sum: ticketCountExpr }, totalRevenue: { $sum: revenueExpr }, bookingCount: { $sum: 1 } } },
       { $lookup: { from: 'schedules', localField: '_id', foreignField: '_id', as: 'schedule' } },
       { $unwind: { path: '$schedule', preserveNullAndEmptyArrays: true } },
-      {
-        $addFields: {
-          capacity:      { $ifNull: ['$schedule.capacity', 100] },
-          occupancyRate: {
-            $multiply: [
-              { $divide: ['$soldSeats', { $ifNull: ['$schedule.capacity', 100] }] },
-              100,
-            ],
-          },
-        },
-      },
-      {
-        $group: {
-          _id:            '$schedule.hall',
-          avgOccupancy:   { $avg: '$occupancyRate' },
-          totalSoldSeats: { $sum: '$soldSeats' },
-          totalCapacity:  { $sum: '$capacity' },
-          totalRevenue:   { $sum: '$totalRevenue' },
-          sessionCount:   { $sum: 1 },
-        },
-      },
+      { $addFields: { capacity: { $ifNull: ['$schedule.hall.totalSeats', 100] }, hallName: { $ifNull: ['$schedule.hall.hallName', 'Танхим'] } } },
+      { $group: { _id: '$hallName', totalSoldSeats: { $sum: '$soldSeats' }, totalCapacity: { $sum: '$capacity' }, totalRevenue: { $sum: '$totalRevenue' }, sessionCount: { $sum: 1 } } },
+      { $addFields: { avgOccupancy: { $cond: [{ $gt: ['$totalCapacity', 0] }, { $multiply: [{ $divide: ['$totalSoldSeats', '$totalCapacity'] }, 100] }, 0] } } },
       { $sort: { avgOccupancy: -1 } },
     ]);
-
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -446,31 +271,13 @@ export const hallOccupancy = async (req, res) => {
 
 export const peakHours = async (req, res) => {
   try {
-    const { start, end } = getDateRange(req.query);
     const data = await Booking.aggregate([
-      { $match: { status: 'confirmed', createdAt: { $gte: start, $lte: end } } },
-      {
-        $group: {
-          _id: {
-            hour:    { $hour: '$createdAt' },
-            weekday: { $dayOfWeek: '$createdAt' },
-          },
-          bookingCount: { $sum: 1 },
-          totalRevenue: { $sum: '$totalAmount' },
-        },
-      },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
+      { $group: { _id: { hour: { $hour: '$createdAt' }, weekday: { $dayOfWeek: '$createdAt' } }, bookingCount: { $sum: 1 }, totalRevenue: { $sum: revenueExpr } } },
       { $sort: { bookingCount: -1 } },
     ]);
-
-    const days   = ['', 'Ням', 'Даваа', 'Мягмар', 'Лхагва', 'Пүрэв', 'Баасан', 'Бямба'];
-    const result = data.map(d => ({
-      hour:         `${String(d._id.hour).padStart(2, '0')}:00`,
-      weekday:      days[d._id.weekday] || '',
-      bookingCount: d.bookingCount,
-      totalRevenue: d.totalRevenue,
-    }));
-
-    res.json({ success: true, data: result });
+    const days = ['', 'Ням', 'Даваа', 'Мягмар', 'Лхагва', 'Пүрэв', 'Баасан', 'Бямба'];
+    res.json({ success: true, data: data.map((row) => ({ hour: `${String(row._id.hour).padStart(2, '0')}:00`, weekday: days[row._id.weekday] || '', bookingCount: row.bookingCount, totalRevenue: row.totalRevenue })) });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -479,61 +286,36 @@ export const peakHours = async (req, res) => {
 export const lostRevenue = async (req, res) => {
   try {
     const { start, end } = getDateRange(req.query);
-    const schedules  = await Schedule.find({ showTime: { $gte: start, $lte: end } }).lean();
-    const scheduleIds = schedules.map(s => s._id);
-
+    const schedules = await Schedule.find({ showTime: { $gte: start, $lte: end } }).populate('movie', 'title').lean();
+    const scheduleIds = schedules.map((schedule) => schedule._id);
     const soldStats = await Booking.aggregate([
-      { $match: { status: 'confirmed', scheduleId: { $in: scheduleIds } } },
-      {
-        $group: {
-          _id:       '$scheduleId',
-          soldSeats: { $sum: { $size: { $ifNull: ['$seats', []] } } },
-          avgPrice:  { $avg: '$totalAmount' },
-        },
-      },
+      { $match: { $and: [paidMatch, { $or: [{ schedule: { $in: scheduleIds } }, { scheduleId: { $in: scheduleIds } }] }] } },
+      { $group: { _id: scheduleExpr, soldSeats: { $sum: ticketCountExpr }, revenue: { $sum: revenueExpr } } },
     ]);
-
-    const soldMap  = Object.fromEntries(soldStats.map(s => [String(s._id), s]));
-    let totalLost  = 0;
-    const data = schedules.map(s => {
-      const sold       = soldMap[String(s._id)]?.soldSeats || 0;
-      const capacity   = s.capacity || 100;
-      const avgPrice   = soldMap[String(s._id)]?.avgPrice  || 0;
+    const soldMap = Object.fromEntries(soldStats.map((row) => [String(row._id), row]));
+    const data = schedules.map((schedule) => {
+      const sold = soldMap[String(schedule._id)]?.soldSeats || 0;
+      const capacity = schedule.hall?.totalSeats || 100;
       const emptySeats = Math.max(0, capacity - sold);
-      const lost       = emptySeats * (avgPrice / Math.max(sold, 1));
-      totalLost       += lost;
-      return { scheduleId: s._id, showTime: s.showTime, hall: s.hall, capacity, soldSeats: sold, emptySeats, estimatedLost: Math.round(lost) };
-    });
-
-    res.json({ success: true, data: data.sort((a, b) => b.estimatedLost - a.estimatedLost), totalLostRevenue: Math.round(totalLost) });
+      const estimatedLost = emptySeats * (schedule.basePrice || 0);
+      return { scheduleId: schedule._id, movieTitle: schedule.movie?.title || '', showTime: schedule.showTime, hall: schedule.hall?.hallName || '', capacity, soldSeats: sold, emptySeats, estimatedLost };
+    }).sort((a, b) => b.estimatedLost - a.estimatedLost);
+    res.json({ success: true, data, totalLostRevenue: data.reduce((sum, row) => sum + row.estimatedLost, 0) });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// ================================================================
-// 5. ҮЗЭГЧ БА ИДЭВХИЙН ТАЙЛАН
-// ================================================================
 export const userActivity = async (req, res) => {
   try {
-    const { start, end } = getDateRange(req.query);
     const [newUsers, returningStats] = await Promise.all([
-      User.countDocuments({ createdAt: { $gte: start, $lte: end } }),
+      User.countDocuments(dateMatch(req.query)),
       Booking.aggregate([
-        { $match: { status: 'confirmed', createdAt: { $gte: start, $lte: end } } },
+        { $match: { ...paidMatch, ...dateMatch(req.query) } },
         { $group: { _id: '$userId', bookingCount: { $sum: 1 } } },
-        {
-          $group: {
-            _id:                 null,
-            totalActiveUsers:    { $sum: 1 },
-            returningUsers:      { $sum: { $cond: [{ $gt: ['$bookingCount', 1] }, 1, 0] } },
-            firstTimeUsers:      { $sum: { $cond: [{ $eq: ['$bookingCount', 1] }, 1, 0] } },
-            avgBookingsPerUser:  { $avg: '$bookingCount' },
-          },
-        },
+        { $group: { _id: null, totalActiveUsers: { $sum: 1 }, returningUsers: { $sum: { $cond: [{ $gt: ['$bookingCount', 1] }, 1, 0] } }, firstTimeUsers: { $sum: { $cond: [{ $eq: ['$bookingCount', 1] }, 1, 0] } }, avgBookingsPerUser: { $avg: '$bookingCount' } } },
       ]),
     ]);
-
     res.json({ success: true, newUsers, ...(returningStats[0] || { totalActiveUsers: 0, returningUsers: 0, firstTimeUsers: 0, avgBookingsPerUser: 0 }) });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -542,36 +324,17 @@ export const userActivity = async (req, res) => {
 
 export const loyaltyReport = async (req, res) => {
   try {
-    const limit   = parseInt(req.query.limit) || 20;
-    const topUsers = await Booking.aggregate([
-      { $match: { status: 'confirmed' } },
-      {
-        $group: {
-          _id:          '$userId',
-          totalSpent:   { $sum: '$totalAmount' },
-          bookingCount: { $sum: 1 },
-          ticketCount:  { $sum: { $size: { $ifNull: ['$seats', []] } } },
-          lastBooking:  { $max: '$createdAt' },
-        },
-      },
+    const limit = parseInt(req.query.limit, 10) || 20;
+    const data = await Booking.aggregate([
+      { $match: paidMatch },
+      { $group: { _id: '$userId', totalSpent: { $sum: revenueExpr }, bookingCount: { $sum: 1 }, ticketCount: { $sum: ticketCountExpr }, lastBooking: { $max: '$createdAt' } } },
       { $sort: { totalSpent: -1 } },
       { $limit: limit },
       { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'user' } },
       { $unwind: { path: '$user', preserveNullAndEmptyArrays: true } },
-      {
-        $project: {
-          userName:      { $ifNull: ['$user.name', 'Тодорхойгүй'] },
-          email:         '$user.email',
-          loyaltyPoints: '$user.loyaltyPoints',
-          totalSpent:    1,
-          bookingCount:  1,
-          ticketCount:   1,
-          lastBooking:   1,
-        },
-      },
+      { $project: { userName: { $ifNull: ['$user.name', 'Зочин'] }, email: '$user.email', loyaltyPoints: '$user.loyaltyPoints', totalSpent: 1, bookingCount: 1, ticketCount: 1, lastBooking: 1 } },
     ]);
-
-    res.json({ success: true, data: topUsers });
+    res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -579,32 +342,8 @@ export const loyaltyReport = async (req, res) => {
 
 export const demographics = async (req, res) => {
   try {
-    const now   = new Date();
-    const users = await User.find({}, { birthDate: 1, gender: 1 }).lean();
-
-    const ageGroups = { '18-25': 0, '26-35': 0, '36-45': 0, '46-55': 0, '55+': 0, 'Тодорхойгүй': 0 };
-    const genderMap = {};
-
-    users.forEach(u => {
-      if (u.gender) genderMap[u.gender] = (genderMap[u.gender] || 0) + 1;
-      if (u.birthDate) {
-        const age = Math.floor((now - new Date(u.birthDate)) / (365.25 * 24 * 3600 * 1000));
-        if      (age < 26) ageGroups['18-25']++;
-        else if (age < 36) ageGroups['26-35']++;
-        else if (age < 46) ageGroups['36-45']++;
-        else if (age < 56) ageGroups['46-55']++;
-        else               ageGroups['55+']++;
-      } else {
-        ageGroups['Тодорхойгүй']++;
-      }
-    });
-
-    res.json({
-      success: true,
-      totalUsers:          users.length,
-      ageGroups:           Object.entries(ageGroups).map(([group, count]) => ({ group, count })),
-      genderDistribution:  Object.entries(genderMap).map(([gender, count]) => ({ gender, count })),
-    });
+    const totalUsers = await User.countDocuments();
+    res.json({ success: true, totalUsers, ageGroups: [], genderDistribution: [] });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -612,70 +351,44 @@ export const demographics = async (req, res) => {
 
 export const cancellations = async (req, res) => {
   try {
-    const { start, end } = getDateRange(req.query);
-    const data = await Booking.aggregate([
-      { $match: { status: 'cancelled', updatedAt: { $gte: start, $lte: end } } },
-      {
-        $group: {
-          _id:            '$cancellationReason',
-          count:          { $sum: 1 },
-          refundedAmount: { $sum: '$totalAmount' },
-        },
-      },
+    const byReason = await Booking.aggregate([
+      { $match: { status: 'cancelled', ...dateMatch(req.query, 'updatedAt') } },
+      { $group: { _id: { $ifNull: ['$cancellationReason', 'Тодорхойгүй'] }, count: { $sum: 1 }, refundedAmount: { $sum: revenueExpr } } },
       { $sort: { count: -1 } },
     ]);
-
     const byMovie = await Booking.aggregate([
-      { $match: { status: 'cancelled', updatedAt: { $gte: start, $lte: end } } },
-      { $group: { _id: '$movieId', count: { $sum: 1 } } },
+      { $match: { status: 'cancelled', ...dateMatch(req.query, 'updatedAt') } },
+      { $group: { _id: '$movie', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
       { $limit: 5 },
       { $lookup: { from: 'movies', localField: '_id', foreignField: '_id', as: 'movie' } },
       { $unwind: { path: '$movie', preserveNullAndEmptyArrays: true } },
       { $project: { movieTitle: { $ifNull: ['$movie.title', 'Тодорхойгүй'] }, count: 1 } },
     ]);
-
-    res.json({ success: true, byReason: data, byMovie });
+    res.json({ success: true, byReason, byMovie });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// ================================================================
-// DASHBOARD
-// ================================================================
 export const dashboard = async (req, res) => {
   try {
-    const { start, end } = getDateRange(req.query);
-    const match = { status: 'confirmed', createdAt: { $gte: start, $lte: end } };
-
-    const [revenueData, topMoviesData, channelData, newUsersCount] = await Promise.all([
+    const match = { ...paidMatch, ...dateMatch(req.query) };
+    const [summaryData, topMovies, channels, newUsers] = await Promise.all([
+      Booking.aggregate([{ $match: match }, { $group: { _id: null, totalRevenue: { $sum: revenueExpr }, ticketCount: { $sum: ticketCountExpr }, bookingCount: { $sum: 1 } } }]),
       Booking.aggregate([
         { $match: match },
-        { $group: { _id: null, totalRevenue: { $sum: '$totalAmount' }, ticketCount: { $sum: { $size: { $ifNull: ['$seats', []] } } }, bookingCount: { $sum: 1 } } },
-      ]),
-      Booking.aggregate([
-        { $match: match },
-        { $group: { _id: '$movieId', totalRevenue: { $sum: '$totalAmount' }, ticketCount: { $sum: { $size: { $ifNull: ['$seats', []] } } } } },
-        { $sort: { totalRevenue: -1 } }, { $limit: 5 },
+        { $group: { _id: movieExpr, totalRevenue: { $sum: revenueExpr }, ticketCount: { $sum: ticketCountExpr } } },
+        { $sort: { totalRevenue: -1 } },
+        { $limit: 5 },
         { $lookup: { from: 'movies', localField: '_id', foreignField: '_id', as: 'movie' } },
         { $unwind: { path: '$movie', preserveNullAndEmptyArrays: true } },
         { $project: { movieTitle: { $ifNull: ['$movie.title', '?'] }, totalRevenue: 1, ticketCount: 1 } },
       ]),
-      Booking.aggregate([
-        { $match: match },
-        { $group: { _id: { $ifNull: ['$bookingChannel', 'Бусад'] }, count: { $sum: 1 } } },
-      ]),
-      User.countDocuments({ createdAt: { $gte: start, $lte: end } }),
+      Booking.aggregate([{ $match: match }, { $group: { _id: { $ifNull: ['$bookingChannel', 'Апп/Веб'] }, count: { $sum: 1 } } }]),
+      User.countDocuments(dateMatch(req.query)),
     ]);
-
-    res.json({
-      success:   true,
-      summary:   revenueData[0] || { totalRevenue: 0, ticketCount: 0, bookingCount: 0 },
-      topMovies: topMoviesData,
-      channels:  channelData,
-      newUsers:  newUsersCount,
-    });
+    res.json({ success: true, summary: summaryData[0] || { totalRevenue: 0, ticketCount: 0, bookingCount: 0 }, topMovies, channels, newUsers });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

@@ -106,14 +106,21 @@ const formatBookingForCashier = (booking) => {
 };
 
 const extractBookingCode = (value = '') => {
-  const raw = String(value || '').trim();
+  let raw = String(value || '').trim();
   if (!raw) return '';
+
+  try {
+    raw = decodeURIComponent(raw);
+  } catch {}
 
   try {
     const parsed = JSON.parse(raw);
     if (parsed.bookingCode) return String(parsed.bookingCode).trim();
+    if (parsed.bookingId) return String(parsed.bookingId).trim();
     if (parsed.id) return String(parsed.id).trim();
     if (parsed.verifyUrl) return extractBookingCode(parsed.verifyUrl);
+    if (parsed.qrPayload) return extractBookingCode(parsed.qrPayload);
+    if (parsed.data) return extractBookingCode(parsed.data);
   } catch {}
 
   try {
@@ -121,11 +128,16 @@ const extractBookingCode = (value = '') => {
     const parts = url.pathname.split('/').filter(Boolean);
     const ticketIndex = parts.findIndex((part) => part === 'ticket-verify');
     if (ticketIndex >= 0 && parts[ticketIndex + 1]) return parts[ticketIndex + 1];
-    const code = url.searchParams.get('bookingId') || url.searchParams.get('code');
+    const verifyIndex = parts.findIndex((part) => ['verify', 'ticket', 'tickets'].includes(part));
+    if (verifyIndex >= 0 && parts[verifyIndex + 1]) return parts[verifyIndex + 1];
+    const code = url.searchParams.get('bookingId') || url.searchParams.get('bookingCode') || url.searchParams.get('code') || url.searchParams.get('id');
     if (code) return code;
   } catch {}
 
-  return raw.replace(/^#/, '');
+  const objectId = raw.match(/[a-f\d]{24}/i);
+  if (objectId) return objectId[0];
+
+  return raw.replace(/^#/, '').trim();
 };
 
 export const scanTicketToStation = async (req, res) => {

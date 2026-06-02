@@ -19,7 +19,9 @@ export const createMovie = async (req, res) => {
             posterUrl,
             description,
             trailerUrl,
-            releaseDate
+            releaseDate,
+            adultPrice,
+            childPrice
         } = req.body;
 
         // Шаардлагатай талбаруудыг шалгах
@@ -53,7 +55,9 @@ export const createMovie = async (req, res) => {
             posterUrl: posterUrl || '',
             description: description || '',
             trailerUrl: trailerUrl || '',
-            releaseDate: movieReleaseDate
+            releaseDate: movieReleaseDate,
+            adultPrice: Number(adultPrice) || 15000,
+            childPrice: Number(childPrice) || 10000
         });
 
         console.log('Movie created successfully:', movie._id);
@@ -86,7 +90,9 @@ export const updateMovie = async (req, res) => {
             posterUrl,
             description,
             trailerUrl,
-            releaseDate
+            releaseDate,
+            adultPrice,
+            childPrice
         } = req.body;
 
         // Талбаруудыг шинэчлэх
@@ -111,6 +117,8 @@ export const updateMovie = async (req, res) => {
         if (posterUrl !== undefined) movie.posterUrl = posterUrl || '';
         if (description !== undefined) movie.description = description || '';
         if (trailerUrl !== undefined) movie.trailerUrl = trailerUrl || '';
+        if (adultPrice !== undefined) movie.adultPrice = Number(adultPrice) || 15000;
+        if (childPrice !== undefined) movie.childPrice = Number(childPrice) || 10000;
         
         // releaseDate-г шалгах
         if (releaseDate !== undefined) {

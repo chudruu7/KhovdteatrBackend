@@ -47,6 +47,11 @@ const scheduleSchema = new mongoose.Schema({
     type: Number,
     required: true,
     default: 15000,
+  },
+  childPrice: {
+    type: Number,
+    required: true,
+    default: 10000,
   }
 }, {
   timestamps: true

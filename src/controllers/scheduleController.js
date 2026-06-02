@@ -38,7 +38,7 @@ export const getSchedulesByDate = async (req, res) => {
       showTime: { $gte: start, $lte: end },
     })
       .sort({ showTime: 1 })
-      .populate('movie', 'title posterUrl duration genre rating status price');
+      .populate('movie', 'title posterUrl duration genre rating status adultPrice childPrice');
 
     console.log(`[Schedule] found: ${schedules.length}`);
 
@@ -54,16 +54,18 @@ export const getSchedulesByDate = async (req, res) => {
 export const getScheduleByMovie = async (req, res) => {
   try {
     const { movieId } = req.params;
-    const dateStr = req.query.date || new Date().toISOString().split('T')[0];
+    const query = { movie: movieId };
 
-    const { start, end } = mongoliaDateToUTCRange(dateStr);
+    if (req.query.date) {
+      const { start, end } = mongoliaDateToUTCRange(req.query.date);
+      query.showTime = { $gte: start, $lte: end };
+    } else {
+      query.showTime = { $gte: new Date() };
+    }
 
-    const schedules = await Schedule.find({
-      movie:    movieId,
-      showTime: { $gte: start, $lte: end },
-    })
+    const schedules = await Schedule.find(query)
       .sort({ showTime: 1 })
-      .populate('movie', 'title posterUrl');
+      .populate('movie', 'title posterUrl duration adultPrice childPrice');
 
     res.json(schedules);
   } catch (error) {
@@ -91,6 +93,7 @@ export const getOccupiedSeats = async (req, res) => {
       hall:        schedule.hall,
       soldSeats:   schedule.soldSeats,
       basePrice:   schedule.basePrice,
+      childPrice:  schedule.childPrice,
     });
   } catch (error) {
     console.error('OCCUPIED SEATS FETCH ERROR:', error.message);
@@ -103,7 +106,7 @@ export const getOccupiedSeats = async (req, res) => {
 export const createSchedule = async (req, res) => {
   try {
     console.log('BODY:', JSON.stringify(req.body, null, 2));
-    const { movieId, showTime, hall, basePrice } = req.body;
+    const { movieId, showTime, hall, basePrice, childPrice } = req.body;
 
     const movie = await Movie.findById(movieId);
     if (!movie) {
@@ -121,7 +124,8 @@ export const createSchedule = async (req, res) => {
       movie:     movieId,
       showTime:  new Date(showTime),
       hall:      hallData,
-      basePrice: Number(basePrice) || 15000,
+      basePrice: Number(basePrice) || Number(movie.adultPrice) || 15000,
+      childPrice: Number(childPrice) || Number(movie.childPrice) || 10000,
       soldSeats: [],
     });
 
@@ -137,7 +141,7 @@ export const createSchedule = async (req, res) => {
 export const updateSchedule = async (req, res) => {
   try {
     const { id } = req.params;
-    const { showTime, hall, basePrice } = req.body;
+    const { showTime, hall, basePrice, childPrice } = req.body;
 
     const schedule = await Schedule.findById(id);
     if (!schedule) {
@@ -145,7 +149,8 @@ export const updateSchedule = async (req, res) => {
     }
 
     if (showTime)   schedule.showTime  = new Date(showTime);
-    if (basePrice)  schedule.basePrice = Number(basePrice);
+    if (basePrice !== undefined)  schedule.basePrice = Number(basePrice) || schedule.basePrice;
+    if (childPrice !== undefined) schedule.childPrice = Number(childPrice) || schedule.childPrice;
     if (hall) {
       schedule.hall = {
         hallName:    hall?.hallName    || hall?.name || schedule.hall.hallName,

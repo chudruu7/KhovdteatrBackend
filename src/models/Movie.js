@@ -23,6 +23,8 @@ const movieSchema = new mongoose.Schema({
     description:   { type: String, default: '' },
     trailerUrl:    { type: String, default: '' },
     releaseDate:   { type: Date, default: null },
+    adultPrice:    { type: Number, default: 15000 },
+    childPrice:    { type: Number, default: 10000 },
     // ── Жүжигчид ──────────────────────────────
     cast: [{
         name: { type: String, default: '' },

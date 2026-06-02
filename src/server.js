@@ -2,6 +2,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 import express from 'express';
+import path from 'path';
 
 import cors from 'cors';
 import connectDB from './config/db.js';
@@ -17,6 +18,7 @@ import newsRoutes from './routes/newsRoutes.js'; // ЭНЭ МӨРИЙГ НЭМЭ
 import cinemaInfoRoutes from './routes/cinemaInfoRoutes.js'; // ЭНЭ МӨРИЙГ НЭМЭХ
 import cleanupRoutes from './routes/cleanupRoutes.js';
 import cashierRoutes from './routes/cashierRoutes.js';
+import uploadRoutes from './routes/uploadRoutes.js';
 import { cancelExpiredBookings } from './controllers/bookingController.js';
 import { autoCleanupExpiredTickets, requestCleanupApproval } from './utils/cleanupService.js';
 import cron from 'node-cron';
@@ -86,6 +88,7 @@ app.use(cors({
 // Body parser middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // Request logger (хөгжүүлэлтэд)
 app.use((req, res, next) => {
@@ -106,6 +109,7 @@ app.use('/api/cinema-info', cinemaInfoRoutes); // ЭНЭ МӨРИЙГ НЭМЭХ
 app.use('/api/cleanup', cleanupRoutes);
 app.use('/api/qpay', qpayRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/uploads', uploadRoutes);
 // Тестийн Home Route
 app.get('/', (req, res) => {
   res.send('Cinema API ажиллаж байна...');
@@ -117,6 +121,13 @@ app.get('/api/test', (req, res) => {
 });
 
 // 404 handler - Бүртгэгдээгүй route-уудын хувьд
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ message: 'Зургийн хэмжээ 10MB-аас бага байх ёстой.' });
+  }
+  return next(err);
+});
+
 app.use((req, res) => {
   console.log(`404 - Хүсэлт олдсонгүй: ${req.method} ${req.url}`);
   res.status(404).json({ message: 'Хүсэлт олдсонгүй' });

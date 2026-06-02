@@ -25,6 +25,14 @@ const bookingSchema = new mongoose.Schema({
     type: [String],
     required: [true, 'Суудал заавал сонгох шаардлагатай.'],
   },
+  tickets: {
+    type: [{
+      seatId: { type: String, required: true },
+      type: { type: String, enum: ['adult', 'child'], default: 'adult' },
+      price: { type: Number, default: 0 },
+    }],
+    default: [],
+  },
   totalPrice: {
     type: Number,
     required: true,

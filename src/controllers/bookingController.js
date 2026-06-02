@@ -204,6 +204,16 @@ export const createBooking = async (req, res) => {
       });
     }
 
+    const ticketDetails = seats.map((seat) => {
+      const seatId = typeof seat === 'string' ? seat : (seat.seatId || seat.id);
+      const type = typeof seat === 'object' && seat?.type === 'child' ? 'child' : 'adult';
+      return {
+        seatId,
+        type,
+        price: type === 'child' ? (schedule.childPrice || 10000) : (schedule.basePrice || 15000),
+      };
+    });
+
     // Booking үүсгэх — QPay урсгалд payment.status = 'pending'
     const booking = await new Booking({
       schedule:   resolvedScheduleId,
@@ -211,6 +221,7 @@ export const createBooking = async (req, res) => {
       userId:     req.user?._id || null,
       customer:   { name: customer.name, email: customer.email, phone: customer.phone },
       seats:      selectedSeats,
+      tickets:    ticketDetails,
       totalPrice: Number(totalPrice),
       status:     'active',
       payment: {
