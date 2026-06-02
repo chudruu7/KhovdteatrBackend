@@ -14,13 +14,14 @@ const paidMatch = {
 
 function getDateRange(query) {
   const now = new Date();
-  const start = query.startDate ? new Date(query.startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
+  const start = query.startDate ? new Date(query.startDate) : new Date(0);
   const end = query.endDate ? new Date(query.endDate) : now;
   end.setHours(23, 59, 59, 999);
   return { start, end };
 }
 
 const dateMatch = (query, field = 'createdAt') => {
+  if (!query.startDate && !query.endDate) return {};
   const { start, end } = getDateRange(query);
   return { [field]: { $gte: start, $lte: end } };
 };
