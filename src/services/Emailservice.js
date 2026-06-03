@@ -5,10 +5,15 @@ export const sendBookingConfirmation = async ({
   to, orderId, movieTitle, date, time, hall,
   seats, tickets, totalPrice, customer,
 }) => {
-  const USER = process.env.GMAIL_USER;
-  const PASS = process.env.GMAIL_APP_PASS;
+  const USER = process.env.GMAIL_USER || process.env.EMAIL_USER || process.env.SMTP_USER;
+  const PASS = process.env.GMAIL_APP_PASS || process.env.GMAIL_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASS;
 
   console.log('[Email] USER:', USER, '| PASS length:', PASS?.length ?? 'UNDEFINED');
+
+  if (!to) {
+    console.warn('[Email] Recipient address missing.');
+    return { success: false, reason: 'missing_recipient' };
+  }
 
   if (!USER || !PASS) {
     console.warn('[Email] Credentials тохируулаагүй.');
@@ -114,8 +119,8 @@ td:last-child{border-right:none;}
 };
 
 export const sendNewMovieNotification = async ({ to, userName, movie, frontendUrl }) => {
-  const USER = process.env.GMAIL_USER;
-  const PASS = process.env.GMAIL_APP_PASS;
+  const USER = process.env.GMAIL_USER || process.env.EMAIL_USER || process.env.SMTP_USER;
+  const PASS = process.env.GMAIL_APP_PASS || process.env.GMAIL_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASS;
 
   if (!USER || !PASS) {
     console.warn('[Email] Credentials тохируулаагүй.');

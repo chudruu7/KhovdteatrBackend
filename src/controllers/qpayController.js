@@ -60,6 +60,8 @@ const sendPaidBookingEmail = async (booking) => {
     booking.ticketEmailSentAt = new Date();
     await booking.save();
   }
+
+  return result;
 };
 
 const findBookingForInvoice = async ({ invoiceId, bookingId }) => {
@@ -134,7 +136,14 @@ const markBookingPaid = async ({ invoiceId, bookingId, paymentId = null }) => {
   booking.status = 'active';
   await booking.save();
 
-  await sendPaidBookingEmail(booking);
+  try {
+    const emailResult = await sendPaidBookingEmail(booking);
+    if (!emailResult?.success) {
+      console.warn('[QPay] Booking paid, but ticket email was not sent:', emailResult?.reason || emailResult?.error || 'unknown');
+    }
+  } catch (err) {
+    console.error('[QPay] Booking paid, but ticket email failed:', err.message);
+  }
 
   return booking;
 };
