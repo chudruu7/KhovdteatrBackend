@@ -33,18 +33,45 @@ const formatTheaterDateTime = (value) => {
 };
 
 const sendPaidBookingEmail = async (booking) => {
-  if (!booking) return { success: false, reason: 'missing_booking' };
-  if (booking.ticketEmailSentAt) return { success: true, skipped: true, reason: 'already_sent' };
-  if (!booking.customer?.email) return { success: false, reason: 'missing_customer_email' };
+  console.log('[QPay/Email] ── sendPaidBookingEmail эхэллээ ──');
+  console.log('[QPay/Email] Booking ID:', booking?._id);
+  console.log('[QPay/Email] Customer email:', booking?.customer?.email);
+  console.log('[QPay/Email] ticketEmailSentAt:', booking?.ticketEmailSentAt);
+
+  if (!booking) {
+    console.warn('[QPay/Email] ⚠ Booking объект байхгүй.');
+    return { success: false, reason: 'missing_booking' };
+  }
+  if (booking.ticketEmailSentAt) {
+    console.log('[QPay/Email] ℹ И-мэйл аль хэдийн илгээгдсэн — skip.');
+    return { success: true, skipped: true, reason: 'already_sent' };
+  }
+  if (!booking.customer?.email) {
+    console.warn('[QPay/Email] ⚠ Customer email байхгүй.');
+    return { success: false, reason: 'missing_customer_email' };
+  }
 
   await booking.populate([
     { path: 'movie', select: 'title' },
     { path: 'schedule', populate: { path: 'movie', select: 'title' } },
   ]);
 
-  if (!booking.schedule?.showTime) return { success: false, reason: 'missing_show_time' };
+  console.log('[QPay/Email] Schedule showTime:', booking.schedule?.showTime);
+  console.log('[QPay/Email] Movie title:', booking.schedule?.movie?.title || booking.movie?.title);
+
+  if (!booking.schedule?.showTime) {
+    console.warn('[QPay/Email] ⚠ Schedule showTime байхгүй.');
+    return { success: false, reason: 'missing_show_time' };
+  }
 
   const show = formatTheaterDateTime(booking.schedule.showTime);
+  console.log('[QPay/Email] 📤 И-мэйл илгээх гэж байна:', {
+    to: booking.customer.email,
+    movie: booking.schedule.movie?.title || booking.movie?.title || 'Үзвэр',
+    date: show.date,
+    time: show.time,
+  });
+
   const result = await sendBookingConfirmation({
     to: booking.customer.email,
     orderId: String(booking._id),
@@ -58,42 +85,71 @@ const sendPaidBookingEmail = async (booking) => {
     customer: booking.customer,
   });
 
+  console.log('[QPay/Email] sendBookingConfirmation үр дүн:', JSON.stringify(result));
+
   if (result?.success) {
     booking.ticketEmailSentAt = new Date();
     await booking.save();
+    console.log('[QPay/Email] ✅ ticketEmailSentAt хадгалагдлаа.');
+  } else {
+    console.warn('[QPay/Email] ⚠ И-мэйл илгээгдсэнгүй:', result?.reason || result?.error);
   }
 
   return result;
 };
 
 const findBookingForInvoice = async ({ invoiceId, bookingId }) => {
+  console.log('[QPay] findBookingForInvoice:', { invoiceId, bookingId });
+
   if (bookingId) {
-    const booking = await Booking.findById(bookingId).populate({
-      path: 'schedule',
-      populate: { path: 'movie', select: 'title' },
-    });
-    if (booking) return booking;
+    const booking = await Booking.findById(bookingId)
+      .populate('movie', 'title')
+      .populate({
+        path: 'schedule',
+        select: 'showTime hall movie',
+        populate: { path: 'movie', select: 'title' },
+      });
+    if (booking) {
+      console.log('[QPay] Booking олдлоо (by bookingId):', booking._id);
+      return booking;
+    }
+    console.warn('[QPay] ⚠ bookingId-ээр олдсонгүй:', bookingId);
   }
 
   if (invoiceId) {
-    return Booking.findOne({ 'payment.transactionId': String(invoiceId) }).populate({
-      path: 'schedule',
-      populate: { path: 'movie', select: 'title' },
-    });
+    const booking = await Booking.findOne({ 'payment.transactionId': String(invoiceId) })
+      .populate('movie', 'title')
+      .populate({
+        path: 'schedule',
+        select: 'showTime hall movie',
+        populate: { path: 'movie', select: 'title' },
+      });
+    if (booking) {
+      console.log('[QPay] Booking олдлоо (by invoiceId):', booking._id);
+    } else {
+      console.warn('[QPay] ⚠ invoiceId-ээр олдсонгүй:', invoiceId);
+    }
+    return booking;
   }
 
+  console.warn('[QPay] ⚠ invoiceId ба bookingId хоёулаа байхгүй.');
   return null;
 };
 
 export const completeTestPayment = async (req, res) => {
+  console.log('[QPay] ── completeTestPayment эхэллээ ──');
   try {
     const { invoiceId } = req.params;
     const { bookingId } = req.body || {};
+    console.log('[QPay] Test payment params:', { invoiceId, bookingId });
+
     const { booking, emailResult } = await markBookingPaid({
       invoiceId,
       bookingId,
       paymentId: `TEST-${Date.now()}`,
     });
+
+    console.log('[QPay] Test payment амжилттай. Email result:', JSON.stringify(emailResult));
 
     return res.json({
       success: true,
@@ -107,6 +163,7 @@ export const completeTestPayment = async (req, res) => {
       },
     });
   } catch (err) {
+    console.error('[QPay] ❌ completeTestPayment алдаа:', err.message);
     return res.status(err.statusCode || 500).json({
       success: false,
       paid: false,
@@ -116,6 +173,8 @@ export const completeTestPayment = async (req, res) => {
 };
 
 const markBookingPaid = async ({ invoiceId, bookingId, paymentId = null }) => {
+  console.log('[QPay] ── markBookingPaid эхэллээ ──', { invoiceId, bookingId, paymentId });
+
   const booking = await findBookingForInvoice({ invoiceId, bookingId });
   if (!booking) {
     const err = new Error('Захиалга олдсонгүй.');
@@ -123,7 +182,23 @@ const markBookingPaid = async ({ invoiceId, bookingId, paymentId = null }) => {
     throw err;
   }
 
-  if (!booking.schedule?.showTime || new Date(booking.schedule.showTime).getTime() <= Date.now()) {
+  console.log('[QPay] Booking олдлоо:', {
+    id: booking._id,
+    status: booking.status,
+    paymentStatus: booking.payment?.status,
+    showTime: booking.schedule?.showTime,
+    customerEmail: booking.customer?.email,
+  });
+
+  // showTime дууссан эсэхийг шалгах
+  const showTime = booking.schedule?.showTime ? new Date(booking.schedule.showTime) : null;
+  const now = Date.now();
+  if (!showTime || showTime.getTime() <= now) {
+    console.warn('[QPay] ⚠ ShowTime дууссан:', {
+      showTime: showTime?.toISOString(),
+      now: new Date(now).toISOString(),
+      diff: showTime ? `${Math.round((now - showTime.getTime()) / 60000)} минут өнгөрсөн` : 'showTime байхгүй',
+    });
     booking.payment.status = 'failed';
     booking.status = 'cancelled';
     await booking.save();
@@ -133,21 +208,28 @@ const markBookingPaid = async ({ invoiceId, bookingId, paymentId = null }) => {
     throw err;
   }
 
+  // Booking-г paid болгох
   booking.payment.status = 'paid';
   booking.payment.method = 'qpay';
-  booking.payment.transactionId = paymentId || invoiceId || booking.payment.transactionId;
+  booking.payment.transactionId = invoiceId || booking.payment.transactionId || paymentId;
   booking.status = 'active';
   await booking.save();
+  console.log('[QPay] ✅ Booking paid болгосон:', booking._id);
 
+  // И-мэйл илгээх
   let emailResult = null;
   try {
+    console.log('[QPay] И-мэйл илгээх гэж байна...');
     emailResult = await sendPaidBookingEmail(booking);
     if (!emailResult?.success) {
-      console.warn('[QPay] Booking paid, but ticket email was not sent:', emailResult?.reason || emailResult?.error || 'unknown');
+      console.warn('[QPay] ⚠ Booking paid, гэхдээ и-мэйл илгээгдсэнгүй:', emailResult?.reason || emailResult?.error || 'unknown');
+    } else {
+      console.log('[QPay] ✅ И-мэйл амжилттай илгээгдлээ.');
     }
   } catch (err) {
     emailResult = { success: false, error: err.message };
-    console.error('[QPay] Booking paid, but ticket email failed:', err.message);
+    console.error('[QPay] ❌ И-мэйл илгээхэд алдаа:', err.message);
+    console.error('[QPay] ❌ Stack:', err.stack);
   }
 
   return { booking, emailResult };
@@ -206,10 +288,14 @@ export const checkPayment = async (req, res) => {
 
     const result = await checkPaymentStatus(invoiceId);
     if (result.paid) {
+      console.log('[QPay] checkPayment → paid=true, markBookingPaid дуудаж байна...');
       try {
-        await markBookingPaid({ invoiceId, paymentId: result.payments?.[0]?.payment_id });
+        const { emailResult } = await markBookingPaid({ invoiceId, paymentId: result.payments?.[0]?.payment_id });
+        // И-мэйл үр дүнг response-д оруулна
+        result.email = emailResult;
       } catch (err) {
         console.warn('[QPay] Paid invoice booking update warning:', err.message);
+        result.bookingError = err.message;
       }
     }
     return res.status(200).json({ success: true, data: result });

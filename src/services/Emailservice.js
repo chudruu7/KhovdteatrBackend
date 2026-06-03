@@ -1,6 +1,36 @@
 // cinema-back/src/services/Emailservice.js
 import nodemailer from 'nodemailer';
 
+/**
+ * Nodemailer transporter-г үүсгэх helper.
+ * Gmail холболтыг verify хийж, холбогдож чадахгүй бол шалтгааныг лог руу бичнэ.
+ */
+const createVerifiedTransporter = async (USER, PASS) => {
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: USER, pass: PASS },
+    connectionTimeout: 10000,  // 10 секунд
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
+  });
+
+  // Gmail-д нэвтэрч чадаж байгаа эсэхийг шалгах
+  try {
+    await transporter.verify();
+    console.log('[Email] ✅ Gmail холболт амжилттай.');
+  } catch (verifyErr) {
+    console.error('[Email] ❌ Gmail холболт амжилтгүй:', {
+      message: verifyErr.message,
+      code: verifyErr.code,
+      command: verifyErr.command,
+      response: verifyErr.response,
+    });
+    // verify амжилтгүй ч transporter-г буцаана — sendMail дээр дахин оролдож үзнэ
+  }
+
+  return transporter;
+};
+
 export const sendBookingConfirmation = async ({
   to, orderId, movieTitle, date, time, hall,
   seats, tickets, totalPrice, customer,
@@ -9,22 +39,21 @@ export const sendBookingConfirmation = async ({
   const RAW_PASS = process.env.GMAIL_APP_PASS || process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASS;
   const PASS = RAW_PASS?.replace(/\s/g, '');
 
+  console.log('[Email] ── sendBookingConfirmation эхэллээ ──');
   console.log('[Email] USER:', USER, '| PASS length:', PASS?.length ?? 'UNDEFINED');
+  console.log('[Email] To:', to, '| OrderId:', orderId, '| Movie:', movieTitle);
 
   if (!to) {
-    console.warn('[Email] Recipient address missing.');
+    console.warn('[Email] ⚠ Recipient address (to) байхгүй байна — skip.');
     return { success: false, reason: 'missing_recipient' };
   }
 
   if (!USER || !PASS) {
-    console.warn('[Email] Credentials тохируулаагүй.');
+    console.warn('[Email] ⚠ Gmail credentials (.env) тохируулаагүй.');
     return { success: false, reason: 'not_configured' };
   }
 
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user: USER, pass: PASS },
-  });
+  const transporter = await createVerifiedTransporter(USER, PASS);
 
   const money = (n) => Number(n).toLocaleString('mn-MN') + '₮';
   const seatList = Array.isArray(seats) ? seats.join(', ') : seats;
@@ -104,6 +133,7 @@ td:last-child{border-right:none;}
 </div></body></html>`;
 
   try {
+    console.log('[Email] 📤 Илгээж байна... To:', to);
     const info = await transporter.sendMail({
       from:    `"Үзвэр Театр" <${USER}>`,
       to,
@@ -111,16 +141,17 @@ td:last-child{border-right:none;}
       html,
       text: `Захиалга амжилттай!\nДугаар: ${orderId}\nҮзвэр: ${movieTitle}\nОгноо: ${date} ${time}\nСуудал: ${seatList}\nНийт: ${money(totalPrice)}`,
     });
-    console.log('[Email] ✅ Амжилттай:', info.messageId, '→', to);
+    console.log('[Email] ✅ Амжилттай илгээгдлээ:', info.messageId, '→', to);
     return { success: true, messageId: info.messageId };
   } catch (err) {
-    console.error('[Email] Алдаа:', err.message);
-    console.error('[Email] Ticket send failed detail:', {
+    console.error('[Email] ❌ Илгээхэд алдаа гарлаа:', err.message);
+    console.error('[Email] ❌ Дэлгэрэнгүй:', {
       code: err.code,
       command: err.command,
       response: err.response,
       responseCode: err.responseCode,
       to,
+      stack: err.stack,
     });
     return {
       success: false,
@@ -143,10 +174,7 @@ export const sendNewMovieNotification = async ({ to, userName, movie, frontendUr
     return { success: false, reason: 'not_configured' };
   }
 
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user: USER, pass: PASS },
-  });
+  const transporter = await createVerifiedTransporter(USER, PASS);
 
   const url = frontendUrl || 'https://khovdteatr-web-pied.vercel.app';
   const title = movie?.title || 'Шинэ үзвэр';
