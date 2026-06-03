@@ -33,14 +33,16 @@ const formatTheaterDateTime = (value) => {
 };
 
 const sendPaidBookingEmail = async (booking) => {
-  if (!booking || booking.ticketEmailSentAt || !booking.customer?.email) return;
+  if (!booking) return { success: false, reason: 'missing_booking' };
+  if (booking.ticketEmailSentAt) return { success: true, skipped: true, reason: 'already_sent' };
+  if (!booking.customer?.email) return { success: false, reason: 'missing_customer_email' };
 
   await booking.populate([
     { path: 'movie', select: 'title' },
     { path: 'schedule', populate: { path: 'movie', select: 'title' } },
   ]);
 
-  if (!booking.schedule?.showTime) return;
+  if (!booking.schedule?.showTime) return { success: false, reason: 'missing_show_time' };
 
   const show = formatTheaterDateTime(booking.schedule.showTime);
   const result = await sendBookingConfirmation({
@@ -87,7 +89,7 @@ export const completeTestPayment = async (req, res) => {
   try {
     const { invoiceId } = req.params;
     const { bookingId } = req.body || {};
-    const booking = await markBookingPaid({
+    const { booking, emailResult } = await markBookingPaid({
       invoiceId,
       bookingId,
       paymentId: `TEST-${Date.now()}`,
@@ -101,6 +103,7 @@ export const completeTestPayment = async (req, res) => {
         status: 'PAID',
         invoiceId,
         bookingId: String(booking._id),
+        email: emailResult,
       },
     });
   } catch (err) {
@@ -136,16 +139,18 @@ const markBookingPaid = async ({ invoiceId, bookingId, paymentId = null }) => {
   booking.status = 'active';
   await booking.save();
 
+  let emailResult = null;
   try {
-    const emailResult = await sendPaidBookingEmail(booking);
+    emailResult = await sendPaidBookingEmail(booking);
     if (!emailResult?.success) {
       console.warn('[QPay] Booking paid, but ticket email was not sent:', emailResult?.reason || emailResult?.error || 'unknown');
     }
   } catch (err) {
+    emailResult = { success: false, error: err.message };
     console.error('[QPay] Booking paid, but ticket email failed:', err.message);
   }
 
-  return booking;
+  return { booking, emailResult };
 };
 
 // ── 1. Invoice үүсгэх ─────────────────────────────────────────────────────────

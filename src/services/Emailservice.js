@@ -115,7 +115,21 @@ td:last-child{border-right:none;}
     return { success: true, messageId: info.messageId };
   } catch (err) {
     console.error('[Email] Алдаа:', err.message);
-    return { success: false, error: err.message };
+    console.error('[Email] Ticket send failed detail:', {
+      code: err.code,
+      command: err.command,
+      response: err.response,
+      responseCode: err.responseCode,
+      to,
+    });
+    return {
+      success: false,
+      error: err.message,
+      code: err.code,
+      command: err.command,
+      response: err.response,
+      responseCode: err.responseCode,
+    };
   }
 };
 
@@ -164,6 +178,20 @@ export const sendNewMovieNotification = async ({ to, userName, movie, frontendUr
     return { success: true, messageId: info.messageId };
   } catch (err) {
     console.error('[Email] Шинэ үзвэрийн мэдэгдэл алдаа:', err.message);
-    return { success: false, error: err.message };
+    console.error('[Email] Send failed detail:', {
+      code: err.code,
+      command: err.command,
+      response: err.response,
+      responseCode: err.responseCode,
+      to,
+    });
+    return {
+      success: false,
+      error: err.message,
+      code: err.code,
+      command: err.command,
+      response: err.response,
+      responseCode: err.responseCode,
+    };
   }
 };
