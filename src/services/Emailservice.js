@@ -6,7 +6,8 @@ export const sendBookingConfirmation = async ({
   seats, tickets, totalPrice, customer,
 }) => {
   const USER = process.env.GMAIL_USER || process.env.EMAIL_USER || process.env.SMTP_USER;
-  const PASS = process.env.GMAIL_APP_PASS || process.env.GMAIL_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASS;
+  const RAW_PASS = process.env.GMAIL_APP_PASS || process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASS;
+  const PASS = RAW_PASS?.replace(/\s/g, '');
 
   console.log('[Email] USER:', USER, '| PASS length:', PASS?.length ?? 'UNDEFINED');
 
@@ -120,7 +121,8 @@ td:last-child{border-right:none;}
 
 export const sendNewMovieNotification = async ({ to, userName, movie, frontendUrl }) => {
   const USER = process.env.GMAIL_USER || process.env.EMAIL_USER || process.env.SMTP_USER;
-  const PASS = process.env.GMAIL_APP_PASS || process.env.GMAIL_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASS;
+  const RAW_PASS = process.env.GMAIL_APP_PASS || process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASS;
+  const PASS = RAW_PASS?.replace(/\s/g, '');
 
   if (!USER || !PASS) {
     console.warn('[Email] Credentials тохируулаагүй.');
