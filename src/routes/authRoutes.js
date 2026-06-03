@@ -22,6 +22,8 @@ const toUserData = (user) => ({
   avatarUrl: user.avatarUrl || '',
   membershipLevel: user.membershipLevel || 'standard',
   points: user.points || 0,
+  notifications: user.notifications ?? true,
+  smsAlerts: user.smsAlerts ?? false,
 });
 
 router.post('/register', async (req, res) => {

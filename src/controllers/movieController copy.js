@@ -2,7 +2,7 @@
 
 import Movie from '../models/Movie.js';
 
-// @desc    Шинэ кино үүсгэх
+// @desc    Шинэ үзвэр үүсгэх
 // @route   POST /api/movies
 // @access  Private/Admin
 export const createMovie = async (req, res) => {
@@ -42,7 +42,7 @@ export const createMovie = async (req, res) => {
     }
 };
 
-// @desc    Кино засах
+// @desc    Үзвэр засах
 // @route   PUT /api/movies/:id
 // @access  Private/Admin
 export const updateMovie = async (req, res) => {
@@ -50,7 +50,7 @@ export const updateMovie = async (req, res) => {
         const movie = await Movie.findById(req.params.id);
 
         if (!movie) {
-            return res.status(404).json({ message: 'Кино олдсонгүй' });
+            return res.status(404).json({ message: 'Үзвэр олдсонгүй' });
         }
 
         const {
@@ -82,7 +82,7 @@ export const updateMovie = async (req, res) => {
     }
 };
 
-// @desc    Кино устгах
+// @desc    Үзвэр устгах
 // @route   DELETE /api/movies/:id
 // @access  Private/Admin
 export const deleteMovie = async (req, res) => {
@@ -90,18 +90,18 @@ export const deleteMovie = async (req, res) => {
         const movie = await Movie.findById(req.params.id);
 
         if (!movie) {
-            return res.status(404).json({ message: 'Кино олдсонгүй' });
+            return res.status(404).json({ message: 'Үзвэр олдсонгүй' });
         }
 
         await movie.deleteOne();
-        res.json({ message: 'Кино амжилттай устгагдлаа' });
+        res.json({ message: 'Үзвэр амжилттай устгагдлаа' });
     } catch (error) {
         console.error('Delete movie error:', error);
         res.status(500).json({ message: 'Серверийн алдаа гарлаа', error: error.message });
     }
 };
 
-// @desc    Бүх кино авах
+// @desc    Бүх үзвэр авах
 // @route   GET /api/movies
 // @access  Public
 export const getMovies = async (req, res) => {
@@ -130,7 +130,7 @@ const movies = await Movie.find(query)
     }
 };
 
-// @desc    Нэг кино авах
+// @desc    Нэг үзвэр авах
 // @route   GET /api/movies/:id
 // @access  Public
 export const getMovieById = async (req, res) => {
@@ -138,7 +138,7 @@ export const getMovieById = async (req, res) => {
         const movie = await Movie.findById(req.params.id);
 
         if (!movie) {
-            return res.status(404).json({ message: 'Кино олдсонгүй' });
+            return res.status(404).json({ message: 'Үзвэр олдсонгүй' });
         }
 
         res.json(movie);

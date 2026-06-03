@@ -22,7 +22,7 @@ const hallLayoutSchema = new mongoose.Schema({
   }
 });
 
-// Кино гарах цагийн хуваарийн загвар
+// Үзвэр гарах цагийн хуваарийн загвар
 const scheduleSchema = new mongoose.Schema({
   movie: {
     type: mongoose.Schema.Types.ObjectId,

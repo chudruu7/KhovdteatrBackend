@@ -18,7 +18,6 @@ const userSchema = new mongoose.Schema({
   },
   phone: { type: String },
  address: { type: String },
- notifications: { type: Boolean, default: true },
   avatarUrl: {
     type: String,
     default: ''   // register үед role-оос хамаарч тохируулна (доор харна уу)

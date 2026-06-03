@@ -18,7 +18,7 @@ router.get('/financial/monthly',          ctrl.monthlySales);
 router.get('/financial/payment-methods',  ctrl.paymentMethods);
 router.get('/financial/refunds',          ctrl.refunds);
 
-// ── Кино ба үзэлт ─────────────────────────────────────────
+// ── Үзвэр ба үзэлт ─────────────────────────────────────────
 router.get('/movies/viewership',          ctrl.movieViewership);
 router.get('/movies/top',                 ctrl.topMovies);
 router.get('/movies/new-releases',        ctrl.newReleases);

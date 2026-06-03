@@ -1,4 +1,4 @@
-// src/controllers/bookingController.js
+﻿// src/controllers/bookingController.js
 import Booking  from '../models/Booking.js';
 import Schedule from '../models/Schedule.js';
 import mongoose from 'mongoose';
@@ -67,8 +67,8 @@ const formatBookingForClient = (booking) => {
     id:            booking._id,
     _id:           booking._id,
     bookingCode,
-    title:         movie?.title || 'Тодорхойгүй кино',
-    movieTitle:    movie?.title || 'Тодорхойгүй кино',
+    title:         movie?.title || 'Тодорхойгүй үзвэр',
+    movieTitle:    movie?.title || 'Тодорхойгүй үзвэр',
     posterUrl:     movie?.posterUrl || '',
     date:          showDateTime.date,
     dateISO:       showDateTime.dateISO,
@@ -492,20 +492,33 @@ export const getMyHistory = async (req, res) => {
 
 // ── Private helper: имэйл илгээх ─────────────────────────────────────────────
 async function _sendEmail({ schedule, booking, selectedSeats, seats, customer }) {
-  const d      = new Date(new Date(schedule.showTime).getTime() + 8 * 3600 * 1000);
+  if (booking.ticketEmailSentAt) return;
+
+  const populatedSchedule = schedule?.movie?.title
+    ? schedule
+    : await Schedule.findById(schedule._id || schedule).populate('movie', 'title');
+
+  if (!populatedSchedule?.showTime) return;
+
+  const d = new Date(new Date(populatedSchedule.showTime).getTime() + 8 * 3600 * 1000);
   const mnTime = `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
   const mnDate = d.toISOString().split('T')[0];
 
-  await sendBookingConfirmation({
-    to:         customer.email,
-    orderId:    String(booking._id),
-    movieTitle: schedule.movie?.title || 'Кино',
-    date:       mnDate,
-    time:       mnTime,
-    hall:       schedule.hall?.hallName || '—',
-    seats:      selectedSeats,
-    tickets:    seats,
+  const result = await sendBookingConfirmation({
+    to: customer.email,
+    orderId: String(booking._id),
+    movieTitle: populatedSchedule.movie?.title || 'Үзвэр',
+    date: mnDate,
+    time: mnTime,
+    hall: populatedSchedule.hall?.hallName || '—',
+    seats: selectedSeats,
+    tickets: seats,
     totalPrice: booking.totalPrice,
     customer,
   });
+
+  if (result?.success) {
+    booking.ticketEmailSentAt = new Date();
+    await booking.save();
+  }
 }

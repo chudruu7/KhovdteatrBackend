@@ -49,7 +49,7 @@ export const getSchedulesByDate = async (req, res) => {
   }
 };
 
-// @desc    Нэг киноны цагийн хуваарийг буцаах
+// @desc    Нэг үзвэрийн цагийн хуваарийг буцаах
 // @route   GET /api/schedules/:movieId?date=YYYY-MM-DD
 export const getScheduleByMovie = async (req, res) => {
   try {
@@ -110,7 +110,7 @@ export const createSchedule = async (req, res) => {
 
     const movie = await Movie.findById(movieId);
     if (!movie) {
-      return res.status(404).json({ message: 'Кино олдсонгүй.' });
+      return res.status(404).json({ message: 'Үзвэр олдсонгүй.' });
     }
 
     const hallData = {

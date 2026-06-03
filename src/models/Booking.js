@@ -55,6 +55,10 @@ const bookingSchema = new mongoose.Schema({
       default: 'pending',
     },
   },
+  ticketEmailSentAt: {
+    type: Date,
+    default: null,
+  },
   expiredAt: {
     type: Date,
     default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),

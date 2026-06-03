@@ -7,15 +7,75 @@ import {
   cancelPayment,
 } from '../services/qpayService.js';
 import Booking from '../models/Booking.js';
+import { sendBookingConfirmation } from '../services/Emailservice.js';
+
+const THEATER_TIME_ZONE = 'Asia/Hovd';
+
+const formatTheaterDateTime = (value) => {
+  const date = new Date(value);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: THEATER_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date).reduce((acc, part) => {
+    if (part.type !== 'literal') acc[part.type] = part.value;
+    return acc;
+  }, {});
+
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}`,
+  };
+};
+
+const sendPaidBookingEmail = async (booking) => {
+  if (!booking || booking.ticketEmailSentAt || !booking.customer?.email) return;
+
+  await booking.populate([
+    { path: 'movie', select: 'title' },
+    { path: 'schedule', populate: { path: 'movie', select: 'title' } },
+  ]);
+
+  if (!booking.schedule?.showTime) return;
+
+  const show = formatTheaterDateTime(booking.schedule.showTime);
+  const result = await sendBookingConfirmation({
+    to: booking.customer.email,
+    orderId: String(booking._id),
+    movieTitle: booking.schedule.movie?.title || booking.movie?.title || 'Үзвэр',
+    date: show.date,
+    time: show.time,
+    hall: booking.schedule.hall?.hallName || '—',
+    seats: booking.seats || [],
+    tickets: booking.tickets || (booking.seats || []).map((seatId) => ({ seatId })),
+    totalPrice: booking.totalPrice,
+    customer: booking.customer,
+  });
+
+  if (result?.success) {
+    booking.ticketEmailSentAt = new Date();
+    await booking.save();
+  }
+};
 
 const findBookingForInvoice = async ({ invoiceId, bookingId }) => {
   if (bookingId) {
-    const booking = await Booking.findById(bookingId).populate('schedule');
+    const booking = await Booking.findById(bookingId).populate({
+      path: 'schedule',
+      populate: { path: 'movie', select: 'title' },
+    });
     if (booking) return booking;
   }
 
   if (invoiceId) {
-    return Booking.findOne({ 'payment.transactionId': String(invoiceId) }).populate('schedule');
+    return Booking.findOne({ 'payment.transactionId': String(invoiceId) }).populate({
+      path: 'schedule',
+      populate: { path: 'movie', select: 'title' },
+    });
   }
 
   return null;
@@ -74,6 +134,8 @@ const markBookingPaid = async ({ invoiceId, bookingId, paymentId = null }) => {
   booking.status = 'active';
   await booking.save();
 
+  await sendPaidBookingEmail(booking);
+
   return booking;
 };
 
@@ -128,9 +190,18 @@ export const checkPayment = async (req, res) => {
 export const handleCallback = async (req, res) => {
   const { booking_id, qpay_payment_id } = req.query;
   console.log(`[QPay] Callback — booking_id: ${booking_id}, payment_id: ${qpay_payment_id}`);
-  // TODO: Booking статусыг PAID болгох
-  // await Booking.findByIdAndUpdate(booking_id, { paymentStatus: 'paid' });
-  return res.status(200).json({ success: true });
+  try {
+    if (booking_id) {
+      await markBookingPaid({
+        bookingId: booking_id,
+        paymentId: qpay_payment_id || null,
+      });
+    }
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('[QPay] Callback алдаа:', err.message);
+    return res.status(err.statusCode || 500).json({ success: false, message: err.message });
+  }
 };
 
 // ── 4. Invoice цуцлах ─────────────────────────────────────────────────────────

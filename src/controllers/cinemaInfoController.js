@@ -37,7 +37,7 @@ export const getCinemaInfo = async (req, res) => {
                     { name: 'Grand Hall A', seats: 120, type: 'Standard', price: '₮ 15,000' },
                     { name: 'Grand Hall B', seats: 120, type: 'Standard', price: '₮ 15,000' }
                 ],
-                aboutUs: 'Монголын хамгийн том кино театр',
+                aboutUs: 'Монголын хамгийн том үзвэр театр',
                 termsAndConditions: 'Үйлчилгээний нөхцөл...',
                 privacyPolicy: 'Нууцлалын бодлого...'
             });

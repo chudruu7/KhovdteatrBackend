@@ -30,10 +30,10 @@ router.get('/recent-showtimes', getRecentShowtimes);
 // Сүүлийн захиалгууд
 router.get('/recent-bookings', getRecentBookings);
 
-// Онцлох кинонууд
+// Онцлох үзвэрүүд
 router.get('/featured-movies', getFeaturedMovies);
 router.get('/sparklines', getSparklines);
-// Удахгүй гарах кинонууд
+// Удахгүй гарах үзвэрүүд
 router.get('/upcoming-movies', getUpcomingMovies);
 
 // Мэдэгдлүүд

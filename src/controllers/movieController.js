@@ -1,6 +1,36 @@
 import Movie from '../models/Movie.js';
+import User from '../models/User.js';
+import { sendNewMovieNotification } from '../services/Emailservice.js';
 
-// @desc    Шинэ кино үүсгэх
+const getFrontendUrl = () => (
+    process.env.FRONTEND_URL ||
+    process.env.CLIENT_URL ||
+    'https://khovdteatr-web-pied.vercel.app'
+).replace(/\/$/, '');
+
+const notifyUsersAboutNewMovie = async (movie) => {
+    const users = await User.find({
+        notifications: true,
+        email: { $exists: true, $ne: '' },
+    }).select('name email').lean();
+
+    if (!users.length) return;
+
+    const frontendUrl = getFrontendUrl();
+    const results = await Promise.allSettled(users.map((user) =>
+        sendNewMovieNotification({
+            to: user.email,
+            userName: user.name,
+            movie,
+            frontendUrl,
+        })
+    ));
+
+    const sent = results.filter((result) => result.status === 'fulfilled' && result.value?.success).length;
+    console.log(`[Email] New movie notifications: ${sent}/${users.length}`);
+};
+
+// @desc    Шинэ үзвэр үүсгэх
 // @route   POST /api/movies
 // @access  Private/Admin
 export const createMovie = async (req, res) => {
@@ -61,6 +91,9 @@ export const createMovie = async (req, res) => {
         });
 
         console.log('Movie created successfully:', movie._id);
+        notifyUsersAboutNewMovie(movie).catch((error) => {
+            console.error('New movie notification error:', error.message);
+        });
         res.status(201).json(movie);
     } catch (error) {
         console.error('Create movie error:', error);
@@ -68,7 +101,7 @@ export const createMovie = async (req, res) => {
     }
 };
 
-// @desc    Кино засах
+// @desc    Үзвэр засах
 // @route   PUT /api/movies/:id
 // @access  Private/Admin
 export const updateMovie = async (req, res) => {
@@ -76,7 +109,7 @@ export const updateMovie = async (req, res) => {
         const movie = await Movie.findById(req.params.id);
 
         if (!movie) {
-            return res.status(404).json({ message: 'Кино олдсонгүй' });
+            return res.status(404).json({ message: 'Үзвэр олдсонгүй' });
         }
 
         const {
@@ -138,7 +171,7 @@ export const updateMovie = async (req, res) => {
     }
 };
 
-// @desc    Кино устгах
+// @desc    Үзвэр устгах
 // @route   DELETE /api/movies/:id
 // @access  Private/Admin
 export const deleteMovie = async (req, res) => {
@@ -146,19 +179,19 @@ export const deleteMovie = async (req, res) => {
         const movie = await Movie.findById(req.params.id);
 
         if (!movie) {
-            return res.status(404).json({ message: 'Кино олдсонгүй' });
+            return res.status(404).json({ message: 'Үзвэр олдсонгүй' });
         }
 
         await movie.deleteOne();
 
-        res.json({ message: 'Кино амжилттай устгагдлаа' });
+        res.json({ message: 'Үзвэр амжилттай устгагдлаа' });
     } catch (error) {
         console.error('Delete movie error:', error);
         res.status(500).json({ message: 'Серверийн алдаа гарлаа', error: error.message });
     }
 };
 
-// @desc    Бүх кино авах
+// @desc    Бүх үзвэр авах
 // @route   GET /api/movies
 // @access  Public
 export const getMovies = async (req, res) => {
@@ -176,7 +209,7 @@ export const getMovies = async (req, res) => {
 
         const total = await Movie.countDocuments(query);
 
-        // Кинонуудыг статусаар нь ялгах
+        // Үзвэрүүдийг статусаар нь ялгах
         const nowShowing = movies.filter(m => m.status === 'nowShowing');
         const comingSoon = movies.filter(m => m.status === 'comingSoon');
         const featured = movies.find(m => m.isFeatured) || movies[0] || null;
@@ -193,7 +226,7 @@ export const getMovies = async (req, res) => {
     }
 };
 
-// @desc    Нэг кино авах
+// @desc    Нэг үзвэр авах
 // @route   GET /api/movies/:id
 // @access  Public
 export const getMovieById = async (req, res) => {
@@ -201,7 +234,7 @@ export const getMovieById = async (req, res) => {
         const movie = await Movie.findById(req.params.id);
         
         if (!movie) {
-            return res.status(404).json({ message: 'Кино олдсонгүй' });
+            return res.status(404).json({ message: 'Үзвэр олдсонгүй' });
         }
 
         res.json(movie);

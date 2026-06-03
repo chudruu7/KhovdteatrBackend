@@ -129,7 +129,7 @@ export const getDashboardStats = async (req, res) => {
     const yesterdayNewUsers  = await User.countDocuments({ createdAt: { $gte: yesterday, $lte: yesterdayEnd } });
     const totalUsers         = await User.countDocuments();
 
-    // ── Кино / Үзвэр ──────────────────────────────────────────────────
+    // ── Үзвэр / Үзвэр ──────────────────────────────────────────────────
     const totalMovies   = await Movie.countDocuments();
     const activeShows   = await Schedule.countDocuments({ showTime: { $gte: today, $lte: todayEnd } });
     const upcomingShows = await Schedule.countDocuments({ showTime: { $gte: tomorrow } });
@@ -203,7 +203,7 @@ export const getDashboardStats = async (req, res) => {
       usersGrowth:     usersGrowth.label,
       ticketPriceGrowth: ticketPriceGrowth.label,
 
-      // ── Кино / Үзвэр ─────────────────────────────────────────
+      // ── Үзвэр / Үзвэр ─────────────────────────────────────────
       totalMovies,
       activeShows,
       upcomingShows,

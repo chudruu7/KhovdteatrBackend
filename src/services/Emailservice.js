@@ -91,7 +91,7 @@ td:last-child{border-right:none;}
   <div class="perf"></div>
   <div class="stub">
     <div class="oid">${orderId}</div>
-    <div class="note">⏰ Кино эхлэхээс 15 минутын өмнө ирнэ үү.<br/>ℹ️ Тасалбар буцаах боломжгүй.<br/>📞 Лавлах: +976 7038-0000</div>
+    <div class="note">⏰ Үзвэр эхлэхээс 15 минутын өмнө ирнэ үү.<br/>ℹ️ Тасалбар буцаах боломжгүй.<br/>📞 Лавлах: +976 7038-0000</div>
   </div>
 </div>
 <div class="footer">ХОВД АЙМАГ ХӨГЖИМТ КИНО ТЕАТР<br/>Энэхүү и-мэйлийг автоматаар илгээсэн болно.</div>
@@ -99,16 +99,64 @@ td:last-child{border-right:none;}
 
   try {
     const info = await transporter.sendMail({
-      from:    `"Кино Театр" <${USER}>`,
+      from:    `"Үзвэр Театр" <${USER}>`,
       to,
       subject: `🎫 Тасалбар: ${movieTitle} — ${orderId}`,
       html,
-      text: `Захиалга амжилттай!\nДугаар: ${orderId}\nКино: ${movieTitle}\nОгноо: ${date} ${time}\nСуудал: ${seatList}\nНийт: ${money(totalPrice)}`,
+      text: `Захиалга амжилттай!\nДугаар: ${orderId}\nҮзвэр: ${movieTitle}\nОгноо: ${date} ${time}\nСуудал: ${seatList}\nНийт: ${money(totalPrice)}`,
     });
     console.log('[Email] ✅ Амжилттай:', info.messageId, '→', to);
     return { success: true, messageId: info.messageId };
   } catch (err) {
     console.error('[Email] Алдаа:', err.message);
+    return { success: false, error: err.message };
+  }
+};
+
+export const sendNewMovieNotification = async ({ to, userName, movie, frontendUrl }) => {
+  const USER = process.env.GMAIL_USER;
+  const PASS = process.env.GMAIL_APP_PASS;
+
+  if (!USER || !PASS) {
+    console.warn('[Email] Credentials тохируулаагүй.');
+    return { success: false, reason: 'not_configured' };
+  }
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: USER, pass: PASS },
+  });
+
+  const url = frontendUrl || 'https://khovdteatr-web-pied.vercel.app';
+  const title = movie?.title || 'Шинэ үзвэр';
+  const genre = Array.isArray(movie?.genre) ? movie.genre.join(', ') : movie?.genre || 'Төрөл тодорхойгүй';
+
+  try {
+    const info = await transporter.sendMail({
+      from: `"Үзвэр Театр" <${USER}>`,
+      to,
+      subject: `Шинэ үзвэр нэмэгдлээ: ${title}`,
+      html: `<!DOCTYPE html>
+<html lang="mn">
+<head><meta charset="UTF-8"/><title>Шинэ үзвэр</title></head>
+<body style="margin:0;background:#0a0a12;color:#e8e6f0;font-family:Arial,sans-serif;">
+  <div style="max-width:560px;margin:0 auto;padding:28px 18px;">
+    <div style="border:1px solid rgba(201,168,76,.35);border-radius:18px;padding:24px;background:#12121e;">
+      <p style="color:#f0cc7a;font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 12px;">Шинэ үзвэр</p>
+      <h1 style="margin:0 0 12px;color:#fff;font-size:24px;">${title}</h1>
+      <p style="margin:0 0 10px;color:#b8b4ca;">Сайн байна уу, ${userName || 'үзэгч'}! Манай системд шинэ үзвэр нэмэгдлээ.</p>
+      <p style="margin:0 0 18px;color:#8f8aa3;">Төрөл: ${genre}</p>
+      <a href="${url}" style="display:inline-block;background:#c9a84c;color:#111827;text-decoration:none;font-weight:700;padding:12px 18px;border-radius:10px;">Үзвэр үзэх</a>
+    </div>
+  </div>
+</body>
+</html>`,
+      text: `Сайн байна уу, ${userName || 'үзэгч'}!\nШинэ үзвэр нэмэгдлээ: ${title}\nТөрөл: ${genre}\n${url}`,
+    });
+    console.log('[Email] Шинэ үзвэрийн мэдэгдэл:', info.messageId, '→', to);
+    return { success: true, messageId: info.messageId };
+  } catch (err) {
+    console.error('[Email] Шинэ үзвэрийн мэдэгдэл алдаа:', err.message);
     return { success: false, error: err.message };
   }
 };
