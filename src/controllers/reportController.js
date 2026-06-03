@@ -107,12 +107,13 @@ export const monthlySales = async (req, res) => {
       { $sort: { _id: 1 } },
     ]);
 
-    const formatted = Array.from({ length: 12 }, (_, i) => {
-      const found = data.find((row) => row._id === i + 1);
-      return { month: `${i + 1}-р сар`, monthNum: i + 1, totalRevenue: 0, paidRevenue: 0, ticketCount: 0, bookingCount: 0, cancelledCount: 0, ...(found || {}) };
-    });
+    const rows = data.map((row) => ({
+      ...row,
+      month: `${row._id}-р сар`,
+      monthNum: row._id,
+    }));
 
-    res.json({ success: true, year, data: formatted });
+    res.json({ success: true, year, data: rows });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
