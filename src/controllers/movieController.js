@@ -1,5 +1,6 @@
 import Movie from '../models/Movie.js';
 import User from '../models/User.js';
+import Schedule from '../models/Schedule.js';
 import { sendNewMovieNotification } from '../services/Emailservice.js';
 
 const getFrontendUrl = () => (
@@ -127,6 +128,7 @@ export const updateMovie = async (req, res) => {
             adultPrice,
             childPrice
         } = req.body;
+        const schedulePriceUpdate = {};
 
         // Талбаруудыг шинэчлэх
         if (title !== undefined) movie.title = title;
@@ -150,8 +152,16 @@ export const updateMovie = async (req, res) => {
         if (posterUrl !== undefined) movie.posterUrl = posterUrl || '';
         if (description !== undefined) movie.description = description || '';
         if (trailerUrl !== undefined) movie.trailerUrl = trailerUrl || '';
-        if (adultPrice !== undefined) movie.adultPrice = Number(adultPrice) || 15000;
-        if (childPrice !== undefined) movie.childPrice = Number(childPrice) || 10000;
+        if (adultPrice !== undefined) {
+            const nextAdultPrice = Number(adultPrice) || 15000;
+            movie.adultPrice = nextAdultPrice;
+            schedulePriceUpdate.basePrice = nextAdultPrice;
+        }
+        if (childPrice !== undefined) {
+            const nextChildPrice = Number(childPrice) || 10000;
+            movie.childPrice = nextChildPrice;
+            schedulePriceUpdate.childPrice = nextChildPrice;
+        }
         
         // releaseDate-г шалгах
         if (releaseDate !== undefined) {
@@ -164,7 +174,22 @@ export const updateMovie = async (req, res) => {
 
         await movie.save();
 
-        res.json(movie);
+        let updatedSchedulesCount = 0;
+        if (Object.keys(schedulePriceUpdate).length > 0) {
+            const result = await Schedule.updateMany(
+                {
+                    movie: movie._id,
+                    showTime: { $gte: new Date() },
+                },
+                { $set: schedulePriceUpdate }
+            );
+            updatedSchedulesCount = result.modifiedCount || 0;
+        }
+
+        res.json({
+            ...movie.toObject(),
+            updatedSchedulesCount,
+        });
     } catch (error) {
         console.error('Update movie error:', error);
         res.status(500).json({ message: 'Серверийн алдаа гарлаа', error: error.message });

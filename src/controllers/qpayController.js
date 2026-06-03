@@ -147,6 +147,26 @@ export const createInvoice = async (req, res) => {
     if (!bookingId || !amount)
       return res.status(400).json({ success: false, message: 'bookingId болон amount шаардлагатай' });
 
+    const booking = await Booking.findById(bookingId);
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: 'Захиалга олдсонгүй. Эхлээд захиалгаа дахин үүсгэнэ үү.',
+      });
+    }
+    if (booking.status === 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'Цуцлагдсан захиалгад төлбөр үүсгэх боломжгүй.',
+      });
+    }
+    if (booking.payment?.status === 'paid') {
+      return res.status(400).json({
+        success: false,
+        message: 'Энэ захиалга аль хэдийн төлөгдсөн байна.',
+      });
+    }
+
     const invoice = await createCinemaInvoice({ bookingId, amount, seats, movieTitle });
     await Booking.findByIdAndUpdate(bookingId, {
       $set: {
