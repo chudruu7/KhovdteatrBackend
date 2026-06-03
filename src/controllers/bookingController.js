@@ -490,9 +490,45 @@ export const getMyHistory = async (req, res) => {
   }
 };
 
+export const resendBookingConfirmation = async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id)
+      .populate('movie', 'title posterUrl')
+      .populate({
+        path: 'schedule',
+        select: 'showTime hall movie',
+        populate: { path: 'movie', select: 'title posterUrl' },
+      });
+
+    if (!booking) return res.status(404).json({ success: false, message: 'Захиалга олдсонгүй.' });
+
+    const isOwner = booking.userId && req.user?._id && String(booking.userId) === String(req.user._id);
+    if (req.user?.role !== 'admin' && !isOwner) {
+      return res.status(403).json({ success: false, message: 'Энэ захиалгын имэйлийг дахин илгээх эрхгүй байна.' });
+    }
+
+    if (booking.payment?.status !== 'paid') {
+      return res.status(400).json({ success: false, message: 'Төлбөр баталгаажаагүй захиалгын имэйл илгээх боломжгүй.' });
+    }
+
+    const result = await _sendEmail({
+      schedule: booking.schedule,
+      booking,
+      selectedSeats: booking.seats,
+      seats: booking.tickets?.length ? booking.tickets : booking.seats.map((seatId) => ({ seatId })),
+      customer: booking.customer,
+      force: true,
+    });
+
+    return res.json({ success: Boolean(result?.success), email: result });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Имэйл дахин илгээхэд алдаа гарлаа.', error: err.message });
+  }
+};
+
 // ── Private helper: имэйл илгээх ─────────────────────────────────────────────
-async function _sendEmail({ schedule, booking, selectedSeats, seats, customer }) {
-  if (booking.ticketEmailSentAt) return;
+async function _sendEmail({ schedule, booking, selectedSeats, seats, customer, force = false }) {
+  if (booking.ticketEmailSentAt && !force) return { success: true, skipped: true, reason: 'already_sent' };
 
   const populatedSchedule = schedule?.movie?.title
     ? schedule
@@ -521,4 +557,6 @@ async function _sendEmail({ schedule, booking, selectedSeats, seats, customer })
     booking.ticketEmailSentAt = new Date();
     await booking.save();
   }
+
+  return result;
 }

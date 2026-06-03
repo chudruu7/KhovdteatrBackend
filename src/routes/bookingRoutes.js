@@ -8,7 +8,8 @@ import {
   getMyHistory, 
   verifyBookingStatus,
   cancelBooking,
-  confirmBooking
+  confirmBooking,
+  resendBookingConfirmation
 } from '../controllers/bookingController.js';
 import { sendBookingConfirmation } from '../services/Emailservice.js';
 import { protect, admin } from '../middleware/authMiddleware.js';
@@ -22,6 +23,7 @@ router.get   ('/stats',          protect, getBookingStats);
 router.get   ('/',               protect, getAllBookings);
 router.post  ('/',               protect, createBooking);
 router.post  ('/:id/confirm',    protect, confirmBooking);   // ← QPay callback дараа дуудна
+router.post  ('/:id/resend-confirmation', protect, resendBookingConfirmation);
 router.post  ('/:id/cancel',     protect, cancelBooking);
 // ✅ Dynamic route-ууд ХАМГИЙН СҮҮЛД
 router.get   ('/:bookingId',     protect, getBookingDetails);
