@@ -1,39 +1,69 @@
 // cinema-back/src/services/Emailservice.js
 import nodemailer from 'nodemailer';
+import dns from 'dns/promises';
 
 /**
  * Nodemailer transporter-г үүсгэх helper.
  * Gmail холболтыг verify хийж, холбогдож чадахгүй бол шалтгааныг лог руу бичнэ.
  */
 const createVerifiedTransporter = async (USER, PASS) => {
-  const configs = [
-    { host: 'smtp.gmail.com', port: 587, secure: false, requireTLS: true, family: 4, name: 'gmail-587-starttls-ipv4' },
-    { host: 'smtp.gmail.com', port: 465, secure: true, family: 4, name: 'gmail-465-ssl-ipv4' },
+  let smtpHosts = ['smtp.gmail.com'];
+  try {
+    const ipv4Hosts = await dns.resolve4('smtp.gmail.com');
+    if (ipv4Hosts.length) smtpHosts = ipv4Hosts;
+    console.log('[Email] Gmail SMTP IPv4 hosts:', smtpHosts.join(', '));
+  } catch (dnsErr) {
+    console.warn('[Email] Gmail IPv4 resolve амжилтгүй, hostname ашиглана:', dnsErr.message);
+  }
+
+  const configs = smtpHosts.flatMap((host) => [
+    { host, port: 587, secure: false, requireTLS: true, name: `gmail-587-starttls-${host}` },
+    { host, port: 465, secure: true, name: `gmail-465-ssl-${host}` },
+  ]);
+
+  const baseTls = {
+    servername: 'smtp.gmail.com',
+  };
+
+  const baseOptions = [
+    {
+      connectionTimeout: 12000,
+      greetingTimeout: 12000,
+      socketTimeout: 18000,
+    },
+    {
+      localAddress: '0.0.0.0',
+      connectionTimeout: 12000,
+      greetingTimeout: 12000,
+      socketTimeout: 18000,
+    },
   ];
 
   let lastError = null;
 
   for (const config of configs) {
-    const transporter = nodemailer.createTransport({
-      ...config,
-      auth: { user: USER, pass: PASS },
-      connectionTimeout: 10000,  // 10 секунд
-      greetingTimeout: 10000,
-      socketTimeout: 15000,
-    });
-
-    try {
-      await transporter.verify();
-      console.log(`[Email] ✅ Gmail холболт амжилттай: ${config.name}`);
-      return transporter;
-    } catch (verifyErr) {
-      lastError = verifyErr;
-      console.error(`[Email] ❌ Gmail холболт амжилтгүй: ${config.name}`, {
-        message: verifyErr.message,
-        code: verifyErr.code,
-        command: verifyErr.command,
-        response: verifyErr.response,
+    for (const options of baseOptions) {
+      const label = `${config.name}${options.localAddress ? '-local4' : ''}`;
+      const transporter = nodemailer.createTransport({
+        ...config,
+        ...options,
+        tls: baseTls,
+        auth: { user: USER, pass: PASS },
       });
+
+      try {
+        await transporter.verify();
+        console.log(`[Email] ✅ Gmail холболт амжилттай: ${label}`);
+        return transporter;
+      } catch (verifyErr) {
+        lastError = verifyErr;
+        console.error(`[Email] ❌ Gmail холболт амжилтгүй: ${label}`, {
+          message: verifyErr.message,
+          code: verifyErr.code,
+          command: verifyErr.command,
+          response: verifyErr.response,
+        });
+      }
     }
   }
 
