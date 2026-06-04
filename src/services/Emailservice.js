@@ -7,7 +7,10 @@ import nodemailer from 'nodemailer';
  */
 const createVerifiedTransporter = async (USER, PASS) => {
   const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    family: 4,
     auth: { user: USER, pass: PASS },
     connectionTimeout: 10000,  // 10 секунд
     greetingTimeout: 10000,
