@@ -20,6 +20,7 @@ router.post('/test-complete/:invoiceId', completeTestPayment);
 router.get   ('/payment/:invoiceId',     checkPayment);         // Төлбөр шалгах
 router.delete('/payment/:paymentId',     cancelPaymentHandler); // Төлбөр буцаах
 router.get   ('/callback',               handleCallback);       // QPay callback
+router.post  ('/callback',               handleCallback);       // QPay callback
 
 // Ebarimt
 router.post  ('/ebarimt',                createEbarimtHandler); // И-баримт үүсгэх

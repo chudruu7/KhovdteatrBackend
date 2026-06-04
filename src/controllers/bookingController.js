@@ -144,6 +144,13 @@ async function resolveScheduleId(scheduleId, movieId, date, time, session) {
   return allSchedules[0]._id;
 }
 
+const getSeatId = (seat) => (typeof seat === 'string' ? seat : (seat?.seatId || seat?.id));
+const getTicketType = (seat) => (typeof seat === 'object' && seat?.type === 'child' ? 'child' : 'adult');
+const getSchedulePrices = (schedule) => ({
+  adult: Number(schedule.basePrice) || 15000,
+  child: Number(schedule.childPrice) || 10000,
+});
+
 // @desc  Шинэ захиалга үүсгэх
 // @route POST /api/bookings
 export const createBooking = async (req, res) => {
@@ -161,7 +168,6 @@ export const createBooking = async (req, res) => {
     const missing = [];
     if (!resolvedScheduleId) missing.push('scheduleId');
     if (!seats?.length)       missing.push('seats');
-    if (!totalPrice)          missing.push('totalPrice');
     if (!customer?.name)      missing.push('customer.name');
     if (!customer?.email)     missing.push('customer.email');
     if (!customer?.phone)     missing.push('customer.phone');
@@ -171,7 +177,11 @@ export const createBooking = async (req, res) => {
       return res.status(400).json({ message: 'Захиалгын үндсэн мэдээллүүд дутуу байна.', missing });
     }
 
-    const selectedSeats = seats.map(s => typeof s === 'string' ? s : (s.seatId || s.id));
+    const selectedSeats = seats.map(getSeatId).filter(Boolean).map(String);
+    if (selectedSeats.length !== seats.length || new Set(selectedSeats).size !== selectedSeats.length) {
+      await session.abortTransaction();
+      return res.status(400).json({ message: 'Суудлын мэдээлэл буруу байна.' });
+    }
 
     const schedule = await Schedule.findById(resolvedScheduleId).session(session);
     if (!schedule) {
@@ -204,15 +214,17 @@ export const createBooking = async (req, res) => {
       });
     }
 
+    const prices = getSchedulePrices(schedule);
     const ticketDetails = seats.map((seat) => {
-      const seatId = typeof seat === 'string' ? seat : (seat.seatId || seat.id);
-      const type = typeof seat === 'object' && seat?.type === 'child' ? 'child' : 'adult';
+      const seatId = getSeatId(seat);
+      const type = getTicketType(seat);
       return {
         seatId,
         type,
-        price: type === 'child' ? (schedule.childPrice || 10000) : (schedule.basePrice || 15000),
+        price: type === 'child' ? prices.child : prices.adult,
       };
     });
+    const computedTotalPrice = ticketDetails.reduce((sum, ticket) => sum + ticket.price, 0);
 
     // Booking үүсгэх — QPay урсгалд payment.status = 'pending'
     const booking = await new Booking({
@@ -222,7 +234,7 @@ export const createBooking = async (req, res) => {
       customer:   { name: customer.name, email: customer.email, phone: customer.phone },
       seats:      selectedSeats,
       tickets:    ticketDetails,
-      totalPrice: Number(totalPrice),
+      totalPrice: computedTotalPrice,
       status:     'active',
       payment: {
         method:        paymentMethod,
@@ -245,6 +257,7 @@ export const createBooking = async (req, res) => {
       bookingId:  booking._id,
       totalPrice: booking.totalPrice,
       seats:      booking.seats,
+      tickets:    booking.tickets,
     });
 
   } catch (err) {

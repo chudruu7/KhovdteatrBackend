@@ -263,7 +263,17 @@ export const createInvoice = async (req, res) => {
       });
     }
 
-    const invoice = await createCinemaInvoice({ bookingId, amount, seats, movieTitle });
+    const invoiceAmount = Number(booking.totalPrice) || Number(amount);
+    if (!invoiceAmount) {
+      return res.status(400).json({ success: false, message: 'Төлбөрийн дүн олдсонгүй.' });
+    }
+
+    const invoice = await createCinemaInvoice({
+      bookingId,
+      amount: invoiceAmount,
+      seats: booking.seats?.length ? booking.seats : seats,
+      movieTitle,
+    });
     await Booking.findByIdAndUpdate(bookingId, {
       $set: {
         'payment.method': 'qpay',
@@ -306,18 +316,22 @@ export const checkPayment = async (req, res) => {
 };
 
 // ── 3. Callback (QPay → манай сервер) ────────────────────────────────────────
-// QPay GET дуудна: /api/qpay/callback?booking_id=xxx&qpay_payment_id=yyy
+// QPay дуудна: /api/qpay/callback?booking_id=xxx&qpay_payment_id=yyy
 export const handleCallback = async (req, res) => {
-  const { booking_id, qpay_payment_id } = req.query;
-  console.log(`[QPay] Callback — booking_id: ${booking_id}, payment_id: ${qpay_payment_id}`);
+  const booking_id = req.query.booking_id || req.body?.booking_id || req.body?.bookingId || req.body?.sender_invoice_no;
+  const qpay_payment_id = req.query.qpay_payment_id || req.body?.qpay_payment_id || req.body?.payment_id;
+  console.log(`[QPay] Callback — method: ${req.method}, booking_id: ${booking_id}, payment_id: ${qpay_payment_id}`);
   try {
-    if (booking_id) {
-      await markBookingPaid({
-        bookingId: booking_id,
-        paymentId: qpay_payment_id || null,
-      });
+    if (!booking_id) {
+      console.warn('[QPay] Callback booking_id байхгүй тул booking/email шинэчлэхгүй.');
+      return res.status(400).json({ success: false, message: 'booking_id шаардлагатай.' });
     }
-    return res.status(200).json({ success: true });
+
+    const { emailResult } = await markBookingPaid({
+      bookingId: booking_id,
+      paymentId: qpay_payment_id || null,
+    });
+    return res.status(200).json({ success: true, email: emailResult });
   } catch (err) {
     console.error('[QPay] Callback алдаа:', err.message);
     return res.status(err.statusCode || 500).json({ success: false, message: err.message });
