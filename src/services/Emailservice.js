@@ -6,32 +6,38 @@ import nodemailer from 'nodemailer';
  * Gmail холболтыг verify хийж, холбогдож чадахгүй бол шалтгааныг лог руу бичнэ.
  */
 const createVerifiedTransporter = async (USER, PASS) => {
-  const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
-    family: 4,
-    auth: { user: USER, pass: PASS },
-    connectionTimeout: 10000,  // 10 секунд
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
-  });
+  const configs = [
+    { host: 'smtp.gmail.com', port: 587, secure: false, requireTLS: true, family: 4, name: 'gmail-587-starttls-ipv4' },
+    { host: 'smtp.gmail.com', port: 465, secure: true, family: 4, name: 'gmail-465-ssl-ipv4' },
+  ];
 
-  // Gmail-д нэвтэрч чадаж байгаа эсэхийг шалгах
-  try {
-    await transporter.verify();
-    console.log('[Email] ✅ Gmail холболт амжилттай.');
-  } catch (verifyErr) {
-    console.error('[Email] ❌ Gmail холболт амжилтгүй:', {
-      message: verifyErr.message,
-      code: verifyErr.code,
-      command: verifyErr.command,
-      response: verifyErr.response,
+  let lastError = null;
+
+  for (const config of configs) {
+    const transporter = nodemailer.createTransport({
+      ...config,
+      auth: { user: USER, pass: PASS },
+      connectionTimeout: 10000,  // 10 секунд
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
     });
-    // verify амжилтгүй ч transporter-г буцаана — sendMail дээр дахин оролдож үзнэ
+
+    try {
+      await transporter.verify();
+      console.log(`[Email] ✅ Gmail холболт амжилттай: ${config.name}`);
+      return transporter;
+    } catch (verifyErr) {
+      lastError = verifyErr;
+      console.error(`[Email] ❌ Gmail холболт амжилтгүй: ${config.name}`, {
+        message: verifyErr.message,
+        code: verifyErr.code,
+        command: verifyErr.command,
+        response: verifyErr.response,
+      });
+    }
   }
 
-  return transporter;
+  throw lastError || new Error('Gmail SMTP холболт амжилтгүй.');
 };
 
 export const sendBookingConfirmation = async ({
