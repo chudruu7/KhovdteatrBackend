@@ -70,6 +70,49 @@ const createVerifiedTransporter = async (USER, PASS) => {
   throw lastError || new Error('Gmail SMTP холболт амжилтгүй.');
 };
 
+const getEmailFrom = (fallbackUser) => (
+  process.env.EMAIL_FROM ||
+  process.env.RESEND_FROM ||
+  (fallbackUser ? `"Үзвэр Театр" <${fallbackUser}>` : 'Khovd Teatr <onboarding@resend.dev>')
+);
+
+const sendViaResend = async ({ to, subject, html, text, fallbackUser }) => {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return { configured: false };
+  if (typeof fetch !== 'function') {
+    return { configured: true, success: false, provider: 'resend', error: 'fetch_unavailable' };
+  }
+
+  const from = getEmailFrom(fallbackUser);
+  console.log('[Email/Resend] Илгээж байна...', { to, from });
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from, to, subject, html, text }),
+    });
+
+    const raw = await response.text();
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
+
+    if (!response.ok) {
+      console.error('[Email/Resend] Алдаа:', response.status, data);
+      return { configured: true, success: false, provider: 'resend', status: response.status, error: data };
+    }
+
+    console.log('[Email/Resend] ✅ Амжилттай:', data?.id || data);
+    return { configured: true, success: true, provider: 'resend', messageId: data?.id };
+  } catch (err) {
+    console.error('[Email/Resend] Илгээхэд алдаа:', err.message);
+    return { configured: true, success: false, provider: 'resend', error: err.message };
+  }
+};
+
 export const sendBookingConfirmation = async ({
   to, orderId, movieTitle, date, time, hall,
   seats, tickets, totalPrice, customer,
@@ -86,13 +129,6 @@ export const sendBookingConfirmation = async ({
     console.warn('[Email] ⚠ Recipient address (to) байхгүй байна — skip.');
     return { success: false, reason: 'missing_recipient' };
   }
-
-  if (!USER || !PASS) {
-    console.warn('[Email] ⚠ Gmail credentials (.env) тохируулаагүй.');
-    return { success: false, reason: 'not_configured' };
-  }
-
-  const transporter = await createVerifiedTransporter(USER, PASS);
 
   const money = (n) => Number(n).toLocaleString('mn-MN') + '₮';
   const seatList = Array.isArray(seats) ? seats.join(', ') : seats;
@@ -171,14 +207,30 @@ td:last-child{border-right:none;}
 <div class="footer">ХОВД АЙМАГ ХӨГЖИМТ КИНО ТЕАТР<br/>Энэхүү и-мэйлийг автоматаар илгээсэн болно.</div>
 </div></body></html>`;
 
+  const subject = `🎫 Тасалбар: ${movieTitle} — ${orderId}`;
+  const text = `Захиалга амжилттай!\nДугаар: ${orderId}\nҮзвэр: ${movieTitle}\nОгноо: ${date} ${time}\nСуудал: ${seatList}\nНийт: ${money(totalPrice)}`;
+
+  const resendResult = await sendViaResend({ to, subject, html, text, fallbackUser: USER });
+  if (resendResult.configured) {
+    if (resendResult.success) return resendResult;
+    console.warn('[Email] Resend амжилтгүй тул Gmail SMTP fallback оролдоно.', resendResult.error || resendResult.status);
+  }
+
+  if (!USER || !PASS) {
+    console.warn('[Email] ⚠ HTTP provider болон Gmail credentials тохируулаагүй.');
+    return { success: false, reason: 'not_configured', resend: resendResult };
+  }
+
+  const transporter = await createVerifiedTransporter(USER, PASS);
+
   try {
     console.log('[Email] 📤 Илгээж байна... To:', to);
     const info = await transporter.sendMail({
-      from:    `"Үзвэр Театр" <${USER}>`,
+      from:    getEmailFrom(USER),
       to,
-      subject: `🎫 Тасалбар: ${movieTitle} — ${orderId}`,
+      subject,
       html,
-      text: `Захиалга амжилттай!\nДугаар: ${orderId}\nҮзвэр: ${movieTitle}\nОгноо: ${date} ${time}\nСуудал: ${seatList}\nНийт: ${money(totalPrice)}`,
+      text,
     });
     console.log('[Email] ✅ Амжилттай илгээгдлээ:', info.messageId, '→', to);
     return { success: true, messageId: info.messageId };
@@ -208,23 +260,11 @@ export const sendNewMovieNotification = async ({ to, userName, movie, frontendUr
   const RAW_PASS = process.env.GMAIL_APP_PASS || process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASS;
   const PASS = RAW_PASS?.replace(/\s/g, '');
 
-  if (!USER || !PASS) {
-    console.warn('[Email] Credentials тохируулаагүй.');
-    return { success: false, reason: 'not_configured' };
-  }
-
-  const transporter = await createVerifiedTransporter(USER, PASS);
-
   const url = frontendUrl || 'https://khovdteatr-web-pied.vercel.app';
   const title = movie?.title || 'Шинэ үзвэр';
   const genre = Array.isArray(movie?.genre) ? movie.genre.join(', ') : movie?.genre || 'Төрөл тодорхойгүй';
-
-  try {
-    const info = await transporter.sendMail({
-      from: `"Үзвэр Театр" <${USER}>`,
-      to,
-      subject: `Шинэ үзвэр нэмэгдлээ: ${title}`,
-      html: `<!DOCTYPE html>
+  const subject = `Шинэ үзвэр нэмэгдлээ: ${title}`;
+  const html = `<!DOCTYPE html>
 <html lang="mn">
 <head><meta charset="UTF-8"/><title>Шинэ үзвэр</title></head>
 <body style="margin:0;background:#0a0a12;color:#e8e6f0;font-family:Arial,sans-serif;">
@@ -238,8 +278,29 @@ export const sendNewMovieNotification = async ({ to, userName, movie, frontendUr
     </div>
   </div>
 </body>
-</html>`,
-      text: `Сайн байна уу, ${userName || 'үзэгч'}!\nШинэ үзвэр нэмэгдлээ: ${title}\nТөрөл: ${genre}\n${url}`,
+</html>`;
+  const text = `Сайн байна уу, ${userName || 'үзэгч'}!\nШинэ үзвэр нэмэгдлээ: ${title}\nТөрөл: ${genre}\n${url}`;
+
+  const resendResult = await sendViaResend({ to, subject, html, text, fallbackUser: USER });
+  if (resendResult.configured) {
+    if (resendResult.success) return resendResult;
+    console.warn('[Email] Resend notification амжилтгүй тул Gmail SMTP fallback оролдоно.', resendResult.error || resendResult.status);
+  }
+
+  if (!USER || !PASS) {
+    console.warn('[Email] HTTP provider болон Gmail credentials тохируулаагүй.');
+    return { success: false, reason: 'not_configured', resend: resendResult };
+  }
+
+  const transporter = await createVerifiedTransporter(USER, PASS);
+
+  try {
+    const info = await transporter.sendMail({
+      from: getEmailFrom(USER),
+      to,
+      subject,
+      html,
+      text,
     });
     console.log('[Email] Шинэ үзвэрийн мэдэгдэл:', info.messageId, '→', to);
     return { success: true, messageId: info.messageId };
