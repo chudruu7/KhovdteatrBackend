@@ -6,6 +6,7 @@ import {
   createEbarimt,
   cancelPayment,
 } from '../services/qpayService.js';
+import mongoose from 'mongoose';
 import Booking from '../models/Booking.js';
 import { sendBookingConfirmation } from '../services/Emailservice.js';
 
@@ -102,6 +103,11 @@ const findBookingForInvoice = async ({ invoiceId, bookingId }) => {
   console.log('[QPay] findBookingForInvoice:', { invoiceId, bookingId });
 
   if (bookingId) {
+    if (!mongoose.Types.ObjectId.isValid(String(bookingId))) {
+      console.warn('[QPay] ⚠ bookingId буруу форматтай:', bookingId);
+      return null;
+    }
+
     const booking = await Booking.findById(bookingId)
       .populate('movie', 'title')
       .populate({
@@ -242,6 +248,13 @@ export const createInvoice = async (req, res) => {
 
     if (!bookingId || !amount)
       return res.status(400).json({ success: false, message: 'bookingId болон amount шаардлагатай' });
+
+    if (!mongoose.Types.ObjectId.isValid(String(bookingId))) {
+      return res.status(400).json({
+        success: false,
+        message: 'Захиалгын дугаар буруу байна. Эхлээд захиалгаа амжилттай үүсгэнэ үү.',
+      });
+    }
 
     const booking = await Booking.findById(bookingId);
     if (!booking) {
