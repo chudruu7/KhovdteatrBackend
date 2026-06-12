@@ -25,8 +25,8 @@ const getWireReturnUrl = (bookingId, providedUrl) => {
   return `${getFrontendUrl()}/ticket-verify/${bookingId}`;
 };
 
-const toWireMntAmount = (amount) => Math.round(Number(amount || 0) * 100);
-const fromWireMntAmount = (amount) => Number(amount || 0) / 100;
+const toWireMntAmount = (amount) => Math.round(Number(amount || 0));
+const fromWireMntAmount = (amount) => Number(amount || 0);
 
 const escapeHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;')
