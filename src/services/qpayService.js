@@ -1,24 +1,52 @@
 // src/services/qpayService.js
-// ── Debug хувилбар — 404 шалтгааныг олоход ашиглана ──────────────────────────
-
 import axios from 'axios';
 
-const BASE_URL     = process.env.QPAY_BASE_URL     || 'https://merchant-sandbox.qpay.mn';
-const USERNAME     = process.env.QPAY_USERNAME      || 'TEST_MERCHANT';
-const PASSWORD     = process.env.QPAY_PASSWORD      || '123456';
-const INVOICE_CODE = process.env.QPAY_INVOICE_CODE  || 'TEST_INVOICE';
-const CALLBACK_URL = process.env.QPAY_CALLBACK_URL  || 'http://localhost:5000/api/qpay/callback';
+const BASE_URL = process.env.QPAY_BASE_URL;
+const USERNAME = process.env.QPAY_USERNAME;
+const PASSWORD = process.env.QPAY_PASSWORD;
+const INVOICE_CODE = process.env.QPAY_INVOICE_CODE;
+const CALLBACK_URL = process.env.QPAY_CALLBACK_URL;
+const BRANCH_CODE = process.env.QPAY_BRANCH_CODE;
 
-// ── Сервер эхлэхэд тохиргоог хэвлэнэ ────────────────────────────────────────
-console.log('[QPay CONFIG]', { BASE_URL, USERNAME, INVOICE_CODE });
+if (BASE_URL || USERNAME || INVOICE_CODE) {
+  console.log('[QPay CONFIG]', {
+    BASE_URL: BASE_URL || '(not configured)',
+    USERNAME: USERNAME ? '(configured)' : '(not configured)',
+    INVOICE_CODE: INVOICE_CODE || '(not configured)',
+  });
+}
 
 let _tokenCache = {
-  accessToken:  null,
+  accessToken: null,
   refreshToken: null,
-  expiresAt:    0,
+  expiresAt: 0,
 };
 
+function assertQPayConfigured() {
+  const missing = [];
+  if (!BASE_URL) missing.push('QPAY_BASE_URL');
+  if (!USERNAME) missing.push('QPAY_USERNAME');
+  if (!PASSWORD) missing.push('QPAY_PASSWORD');
+  if (!INVOICE_CODE) missing.push('QPAY_INVOICE_CODE');
+  if (!CALLBACK_URL) missing.push('QPAY_CALLBACK_URL');
+
+  if (
+    String(BASE_URL || '').includes('sandbox') ||
+    USERNAME === 'TEST_MERCHANT' ||
+    INVOICE_CODE === 'TEST_INVOICE'
+  ) {
+    missing.push('live QPay credentials');
+  }
+
+  if (missing.length) {
+    const err = new Error(`QPay live configuration is missing or not live: ${missing.join(', ')}`);
+    err.statusCode = 500;
+    throw err;
+  }
+}
+
 async function getAccessToken() {
+  assertQPayConfigured();
   const now = Date.now();
 
   if (_tokenCache.accessToken && now < _tokenCache.expiresAt - 30_000) {
@@ -31,16 +59,16 @@ async function getAccessToken() {
       const resp = await axios.post(
         `${BASE_URL}/v2/auth/refresh`,
         {},
-        { headers: { Authorization: `Bearer ${_tokenCache.refreshToken}` } }
+        { headers: { Authorization: `Bearer ${_tokenCache.refreshToken}` } },
       );
       _saveToken(resp.data);
       return _tokenCache.accessToken;
     } catch (err) {
-      console.warn('[QPay] Refresh амжилтгүй:', err?.response?.status);
+      console.warn('[QPay] Refresh failed:', err?.response?.status);
     }
   }
 
-  const tokenUrl    = `${BASE_URL}/v2/auth/token`;
+  const tokenUrl = `${BASE_URL}/v2/auth/token`;
   const credentials = Buffer.from(`${USERNAME}:${PASSWORD}`).toString('base64');
 
   console.log('[QPay] Token URL:', tokenUrl);
@@ -48,21 +76,21 @@ async function getAccessToken() {
   const resp = await axios.post(
     tokenUrl,
     {},
-    { headers: { Authorization: `Basic ${credentials}` } }
+    { headers: { Authorization: `Basic ${credentials}` } },
   );
   _saveToken(resp.data);
   return _tokenCache.accessToken;
 }
 
 function _saveToken(data) {
-  _tokenCache.accessToken  = data.access_token;
+  _tokenCache.accessToken = data.access_token;
   _tokenCache.refreshToken = data.refresh_token;
-  _tokenCache.expiresAt    = Date.now() + (data.expires_in || 3600) * 1000;
-  console.log(`[QPay] Token OK. Дуусах: ${new Date(_tokenCache.expiresAt).toLocaleTimeString()}`);
+  _tokenCache.expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
+  console.log(`[QPay] Token OK. Expires: ${new Date(_tokenCache.expiresAt).toLocaleTimeString()}`);
 }
 
 async function qpayRequest(method, path, data = null) {
-  const token   = await getAccessToken();
+  const token = await getAccessToken();
   const fullUrl = `${BASE_URL}${path}`;
 
   console.log(`[QPay] ${method.toUpperCase()} ${fullUrl}`);
@@ -72,8 +100,8 @@ async function qpayRequest(method, path, data = null) {
     method,
     url: fullUrl,
     headers: {
-      'Content-Type':  'application/json',
-      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
     },
   };
   if (data) config.data = data;
@@ -83,9 +111,9 @@ async function qpayRequest(method, path, data = null) {
     console.log(`[QPay] ${resp.status} OK`);
     return resp.data;
   } catch (err) {
-    const status  = err?.response?.status;
+    const status = err?.response?.status;
     const errData = err?.response?.data;
-    console.error(`[QPay ERROR] ${status} — ${fullUrl}`);
+    console.error(`[QPay ERROR] ${status} - ${fullUrl}`);
     console.error('[QPay ERROR] Body:', typeof errData === 'string'
       ? errData.slice(0, 400)
       : JSON.stringify(errData));
@@ -93,46 +121,44 @@ async function qpayRequest(method, path, data = null) {
   }
 }
 
-// ── Exported functions ────────────────────────────────────────────────────────
-
 export async function createCinemaInvoice({ bookingId, amount, seats, movieTitle }) {
   const body = {
-    invoice_code:          INVOICE_CODE,
-    sender_invoice_no:     String(bookingId),
+    invoice_code: INVOICE_CODE,
+    sender_invoice_no: String(bookingId),
     invoice_receiver_code: 'terminal',
-    invoice_description:   movieTitle
-      ? `${movieTitle} — ${seats?.length || 1} суудал`
-      : `Захиалга #${bookingId}`,
-    amount:                Number(amount),
-    callback_url:          `${CALLBACK_URL}?booking_id=${bookingId}`,
-    enable_expiry:         'false',
-    allow_partial:         false,
-    minimum_amount:        null,
-    allow_exceed:          false,
-    maximum_amount:        null,
-    sender_branch_code:    process.env.QPAY_BRANCH_CODE || 'BRANCH1',
+    invoice_description: movieTitle
+      ? `${movieTitle} - ${seats?.length || 1} seats`
+      : `Booking #${bookingId}`,
+    amount: Number(amount),
+    callback_url: `${CALLBACK_URL}?booking_id=${bookingId}`,
+    enable_expiry: 'false',
+    allow_partial: false,
+    minimum_amount: null,
+    allow_exceed: false,
+    maximum_amount: null,
+    sender_branch_code: BRANCH_CODE,
   };
 
   const result = await qpayRequest('POST', '/v2/invoice', body);
   return {
     invoiceId: result.invoice_id,
-    qrCode:    result.qr_image,
-    qrText:    result.qr_text,
-    urls:      result.urls || [],
+    qrCode: result.qr_image,
+    qrText: result.qr_text,
+    urls: result.urls || [],
   };
 }
 
 export async function checkPaymentStatus(invoiceId) {
   const body = {
     object_type: 'INVOICE',
-    object_id:   invoiceId,
+    object_id: invoiceId,
     offset: { page_number: 1, page_limit: 100 },
   };
-  const result   = await qpayRequest('POST', '/v2/payment/check', body);
+  const result = await qpayRequest('POST', '/v2/payment/check', body);
   const payments = result.rows || result.payments || [];
-  const paid     = payments.some(p =>
-    p.payment_status === 'PAID' || p.payment_status === 'APPROVED'
-  );
+  const paid = payments.some((payment) => (
+    payment.payment_status === 'PAID' || payment.payment_status === 'APPROVED'
+  ));
   return { paid, status: paid ? 'PAID' : 'PENDING', payments };
 }
 
@@ -147,7 +173,7 @@ export async function createEbarimt({ paymentId, receiverType = 'CITIZEN', recei
   return await qpayRequest('POST', '/v2/ebarimt/create', body);
 }
 
-export async function cancelPayment({ paymentId, note = 'буцаалт' }) {
+export async function cancelPayment({ paymentId, note = 'refund' }) {
   await qpayRequest('DELETE', `/v2/payment/cancel/${paymentId}`, {
     callback_url: `${CALLBACK_URL}?payment_id=${paymentId}`,
     note,

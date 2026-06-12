@@ -7,6 +7,7 @@ import path from 'path';
 import cors from 'cors';
 import connectDB from './config/db.js';
 import qpayRoutes from './routes/qpayRoutes.js';
+import wireRoutes from './routes/wireRoutes.js';
 // Route-уудыг импортлох
 import movieRoutes from './routes/movieRoutes.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
@@ -85,6 +86,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
+app.use('/api/wire/webhook', express.raw({ type: 'application/json' }));
+
 // Body parser middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -108,6 +111,7 @@ app.use('/api/news', newsRoutes); // ЭНЭ МӨРИЙГ НЭМЭХ
 app.use('/api/cinema-info', cinemaInfoRoutes); // ЭНЭ МӨРИЙГ НЭМЭХ
 app.use('/api/cleanup', cleanupRoutes);
 app.use('/api/qpay', qpayRoutes);
+app.use('/api/wire', wireRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/uploads', uploadRoutes);
 // Тестийн Home Route
