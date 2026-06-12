@@ -165,6 +165,37 @@ const verifyPaidIntentForBooking = async ({ paymentIntentId, booking, intent: pr
   return intent;
 };
 
+const reusableWireStatuses = new Set([
+  'new',
+  'pending',
+  'processing',
+  'requires_action',
+  'requires_confirmation',
+]);
+
+const buildWireCheckoutData = ({
+  paymentIntentId,
+  intent,
+  checkoutUrl,
+  amount,
+  allowedOperators,
+  emailResult = null,
+  reused = false,
+}) => ({
+  paymentIntentId,
+  paymentIntentStatus: intent?.status || 'pending',
+  checkoutUrl,
+  nextAction: intent?.next_action || null,
+  amount,
+  allowedOperators,
+  selectedOperator: intent?.selected_operator,
+  livemode: intent?.livemode,
+  localSandbox: isLocalWireSandbox(),
+  testMode: isWireTestMode(),
+  email: emailResult,
+  reused,
+});
+
 export const createWireCheckout = async (req, res) => {
   try {
     const { bookingId, successUrl } = req.body || {};
@@ -183,6 +214,60 @@ export const createWireCheckout = async (req, res) => {
     if (!wireAmount) return res.status(400).json({ success: false, message: 'Төлбөрийн дүн олдсонгүй.' });
 
     const allowedOperators = getDefaultAllowedOperators();
+    const existingPaymentIntentId = booking.payment?.method === 'wire' && booking.payment?.transactionId;
+
+    if (existingPaymentIntentId && booking.payment?.status === 'pending') {
+      try {
+        const existingIntent = await retrievePaymentIntent(existingPaymentIntentId, { wireAmount });
+
+        if (existingIntent.status === 'succeeded') {
+          const fulfilled = await markBookingPaidAndNotify({
+            bookingId: booking._id,
+            paymentMethod: 'wire',
+            transactionId: existingPaymentIntentId,
+          });
+          return res.json({
+            success: true,
+            data: buildWireCheckoutData({
+              paymentIntentId: existingPaymentIntentId,
+              intent: existingIntent,
+              checkoutUrl: `${getFrontendUrl()}/ticket-verify/${booking._id}`,
+              amount: wireAmount,
+              allowedOperators,
+              emailResult: fulfilled.emailResult,
+              reused: true,
+            }),
+          });
+        }
+
+        if (reusableWireStatuses.has(String(existingIntent.status || '').toLowerCase())) {
+          const checkoutUrl = extractActionUrl(existingIntent.next_action);
+          if (!checkoutUrl) {
+            storeWireActionPage({
+              paymentIntentId: existingPaymentIntentId,
+              bookingId: String(booking._id),
+              amount: wireAmount,
+              nextAction: existingIntent.next_action || existingIntent,
+            });
+          }
+
+          return res.json({
+            success: true,
+            data: buildWireCheckoutData({
+              paymentIntentId: existingPaymentIntentId,
+              intent: existingIntent,
+              checkoutUrl: checkoutUrl || getWireActionPageUrl(existingPaymentIntentId),
+              amount: wireAmount,
+              allowedOperators,
+              reused: true,
+            }),
+          });
+        }
+      } catch (err) {
+        console.warn('[Wire] Existing payment intent lookup failed, creating a new checkout:', err.message);
+      }
+    }
+
     const paymentIntent = await createPaymentIntent({
       bookingId: String(booking._id),
       wireAmount,
@@ -225,19 +310,21 @@ export const createWireCheckout = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      data: {
+      data: buildWireCheckoutData({
         paymentIntentId: paymentIntent.id,
-        paymentIntentStatus: confirmedIntent.status || paymentIntent.status,
+        intent: {
+          ...paymentIntent,
+          ...confirmedIntent,
+          status: confirmedIntent.status || paymentIntent.status,
+          next_action: confirmedIntent.next_action || null,
+          selected_operator: confirmedIntent.selected_operator || paymentIntent.selected_operator,
+          livemode: confirmedIntent.livemode ?? paymentIntent.livemode,
+        },
         checkoutUrl: finalCheckoutUrl,
-        nextAction: confirmedIntent.next_action || null,
         amount: wireAmount,
         allowedOperators,
-        selectedOperator: confirmedIntent.selected_operator || paymentIntent.selected_operator,
-        livemode: confirmedIntent.livemode ?? paymentIntent.livemode,
-        localSandbox: isLocalWireSandbox(),
-        testMode: isWireTestMode(),
-        email: emailResult,
-      },
+        emailResult,
+      }),
     });
   } catch (err) {
     return res.status(err.statusCode || 500).json({
