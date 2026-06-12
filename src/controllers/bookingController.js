@@ -1,7 +1,6 @@
 ﻿// src/controllers/bookingController.js
 import Booking  from '../models/Booking.js';
 import Schedule from '../models/Schedule.js';
-import mongoose from 'mongoose';
 import { sendBookingConfirmation } from '../services/Emailservice.js';
 
 const THEATER_TIME_ZONE = 'Asia/Hovd';
@@ -117,7 +116,7 @@ const markExpiredActiveBookings = async () => {
 };
 
 // ── Helper: scheduleId олох ───────────────────────────────────────────────────
-async function resolveScheduleId(scheduleId, movieId, date, time, session) {
+async function resolveScheduleId(scheduleId, movieId, date, time) {
   if (scheduleId) return scheduleId;
   if (!movieId || !date) return null;
 
@@ -127,7 +126,7 @@ async function resolveScheduleId(scheduleId, movieId, date, time, session) {
       $gte: new Date(`${date}T00:00:00.000Z`),
       $lte: new Date(`${date}T23:59:59.999Z`),
     },
-  }).session(session);
+  });
 
   if (!allSchedules.length) return null;
 
@@ -146,9 +145,13 @@ async function resolveScheduleId(scheduleId, movieId, date, time, session) {
 
 const getSeatId = (seat) => (typeof seat === 'string' ? seat : (seat?.seatId || seat?.id));
 const getTicketType = (seat) => (typeof seat === 'object' && seat?.type === 'child' ? 'child' : 'adult');
+const getPositivePrice = (value, fallback) => {
+  const price = Number(value);
+  return Number.isFinite(price) && price >= 1 ? price : fallback;
+};
 const getSchedulePrices = (schedule) => ({
-  adult: Number(schedule.basePrice) || 15000,
-  child: Number(schedule.childPrice) || 10000,
+  adult: getPositivePrice(schedule.basePrice, 15000),
+  child: getPositivePrice(schedule.childPrice, 10000),
 });
 
 // @desc  Шинэ захиалга үүсгэх
@@ -157,12 +160,11 @@ export const createBooking = async (req, res) => {
   console.log('📦 Booking payload:', JSON.stringify(req.body, null, 2));
 
   const { scheduleId, movieId, date, time, seats, totalPrice, customer, paymentMethod = 'qpay' } = req.body;
-
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  let resolvedScheduleId = null;
+  let selectedSeats = [];
 
   try {
-    const resolvedScheduleId = await resolveScheduleId(scheduleId, movieId, date, time, session);
+    resolvedScheduleId = await resolveScheduleId(scheduleId, movieId, date, time);
 
     // Validation
     const missing = [];
@@ -173,25 +175,21 @@ export const createBooking = async (req, res) => {
     if (!customer?.phone)     missing.push('customer.phone');
 
     if (missing.length > 0) {
-      await session.abortTransaction();
       return res.status(400).json({ message: 'Захиалгын үндсэн мэдээллүүд дутуу байна.', missing });
     }
 
-    const selectedSeats = seats.map(getSeatId).filter(Boolean).map(String);
+    selectedSeats = seats.map(getSeatId).filter(Boolean).map(String);
     if (selectedSeats.length !== seats.length || new Set(selectedSeats).size !== selectedSeats.length) {
-      await session.abortTransaction();
       return res.status(400).json({ message: 'Суудлын мэдээлэл буруу байна.' });
     }
 
-    const schedule = await Schedule.findById(resolvedScheduleId).session(session);
+    const schedule = await Schedule.findById(resolvedScheduleId);
     if (!schedule) {
-      await session.abortTransaction();
       return res.status(404).json({ message: 'Цагийн хуваарь олдсонгүй.' });
     }
 
     // Суудлыг атомик байдлаар нөөцлөх
     if (!schedule.showTime || new Date(schedule.showTime).getTime() <= Date.now()) {
-      await session.abortTransaction();
       return res.status(400).json({
         message: 'Энэ үзвэрийн цаг өнгөрсөн тул тасалбар захиалах боломжгүй.',
       });
@@ -204,11 +202,10 @@ export const createBooking = async (req, res) => {
         soldSeats: { $not: { $elemMatch: { $in: selectedSeats } } }
       },
       { $push: { soldSeats: { $each: selectedSeats } } },
-      { new: true, session }
+      { new: true }
     );
 
     if (!updated) {
-      await session.abortTransaction();
       return res.status(409).json({
         message: 'Сонгосон суудлын нэг буюу хэд нь аль хэдийн захиалагдсан байна. Дахин сонгоно уу.',
       });
@@ -239,16 +236,13 @@ export const createBooking = async (req, res) => {
       payment: {
         method:        paymentMethod,
         transactionId: `TRX-${Date.now()}`,
-        status:        paymentMethod === 'qpay' ? 'pending' : 'paid',
+        status:        ['qpay', 'wire'].includes(paymentMethod) ? 'pending' : 'paid',
       },
       expiredAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-    }).save({ session });
+    }).save();
 
-    await session.commitTransaction();
-    session.endSession();
-
-    // QPay биш бол шууд имэйл илгээнэ
-    if (paymentMethod !== 'qpay' && customer.email) {
+    // Бэлэн/кассын төлбөр бол шууд имэйл илгээнэ. External checkout (QPay/Wire) төлбөр баталгаажсаны дараа илгээнэ.
+    if (!['qpay', 'wire'].includes(paymentMethod) && customer.email) {
       _sendEmail({ schedule, booking, selectedSeats, seats, customer }).catch(console.error);
     }
 
@@ -261,8 +255,11 @@ export const createBooking = async (req, res) => {
     });
 
   } catch (err) {
-    await session.abortTransaction();
-    session.endSession();
+    if (err?.name === 'ValidationError' && selectedSeats?.length) {
+      await Schedule.findByIdAndUpdate(resolvedScheduleId, {
+        $pull: { soldSeats: { $in: selectedSeats } },
+      }).catch(() => {});
+    }
     return res.status(500).json({ message: 'Захиалга хийхэд серверт алдаа гарлаа.', error: err.message });
   }
 };
