@@ -1,0 +1,28 @@
+Server is running on port 5000
+Бүртгэгдсэн route-ууд:
+- /api/movies
+- /api/auth
+- /api/schedules
+- /api/bookings
+- /api/admin
+- /api/news
+- /api/tickets
+- /api/cinema-info
+2026-06-12T15:02:34.114Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+✅ MongoDB амжилттай холбогдлоо: ac-lqi93js-shard-00-01.vmeruws.mongodb.net
+2026-06-12T15:02:39.484Z - GET /api/test
+2026-06-12T15:02:43.798Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+2026-06-12T15:02:54.102Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+2026-06-12T15:03:03.787Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+2026-06-12T15:03:14.098Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+2026-06-12T15:03:23.798Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+2026-06-12T15:03:34.109Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+2026-06-12T15:03:43.786Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+2026-06-12T15:03:54.116Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+2026-06-12T15:04:03.792Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+2026-06-12T15:04:14.355Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+2026-06-12T15:04:24.055Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+2026-06-12T15:04:34.356Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+2026-06-12T15:04:44.046Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+2026-06-12T15:04:54.366Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d
+2026-06-12T15:05:04.048Z - GET /api/schedules/seats/6a2c1774ca882a0bcfd66b1d

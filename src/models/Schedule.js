@@ -46,11 +46,13 @@ const scheduleSchema = new mongoose.Schema({
   basePrice: {
     type: Number,
     required: true,
+    min: 1,
     default: 15000,
   },
   childPrice: {
     type: Number,
     required: true,
+    min: 1,
     default: 10000,
   }
 }, {

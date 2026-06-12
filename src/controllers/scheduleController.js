@@ -6,6 +6,12 @@ import Movie    from '../models/Movie.js';
 // Mongolia = UTC+8, DST байхгүй
 const MONGOLIA_MS = 8 * 60 * 60 * 1000;
 
+const parseTicketPrice = (value, fallback) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : fallback;
+};
+
 /**
  * "YYYY-MM-DD" → тухайн өдрийн UTC range
  * Mongolia-д 10:00 local = 02:00 UTC тул UTC day range хангалттай
@@ -124,8 +130,8 @@ export const createSchedule = async (req, res) => {
       movie:     movieId,
       showTime:  new Date(showTime),
       hall:      hallData,
-      basePrice: Number(basePrice) || Number(movie.adultPrice) || 15000,
-      childPrice: Number(childPrice) || Number(movie.childPrice) || 10000,
+      basePrice: parseTicketPrice(basePrice, parseTicketPrice(movie.adultPrice, 15000)),
+      childPrice: parseTicketPrice(childPrice, parseTicketPrice(movie.childPrice, 10000)),
       soldSeats: [],
     });
 
@@ -149,8 +155,8 @@ export const updateSchedule = async (req, res) => {
     }
 
     if (showTime)   schedule.showTime  = new Date(showTime);
-    if (basePrice !== undefined)  schedule.basePrice = Number(basePrice) || schedule.basePrice;
-    if (childPrice !== undefined) schedule.childPrice = Number(childPrice) || schedule.childPrice;
+    if (basePrice !== undefined)  schedule.basePrice = parseTicketPrice(basePrice, schedule.basePrice);
+    if (childPrice !== undefined) schedule.childPrice = parseTicketPrice(childPrice, schedule.childPrice);
     if (hall) {
       schedule.hall = {
         hallName:    hall?.hallName    || hall?.name || schedule.hall.hallName,

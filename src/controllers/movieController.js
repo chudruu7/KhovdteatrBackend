@@ -9,6 +9,12 @@ const getFrontendUrl = () => (
     'https://khovdteatr-web-pied.vercel.app'
 ).replace(/\/$/, '');
 
+const parseTicketPrice = (value, fallback) => {
+    if (value === undefined || value === null || value === '') return fallback;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 1 ? parsed : fallback;
+};
+
 const notifyUsersAboutNewMovie = async (movie) => {
     const users = await User.find({
         notifications: true,
@@ -87,8 +93,8 @@ export const createMovie = async (req, res) => {
             description: description || '',
             trailerUrl: trailerUrl || '',
             releaseDate: movieReleaseDate,
-            adultPrice: Number(adultPrice) || 15000,
-            childPrice: Number(childPrice) || 10000
+            adultPrice: parseTicketPrice(adultPrice, 15000),
+            childPrice: parseTicketPrice(childPrice, 10000)
         });
 
         console.log('Movie created successfully:', movie._id);
@@ -153,12 +159,12 @@ export const updateMovie = async (req, res) => {
         if (description !== undefined) movie.description = description || '';
         if (trailerUrl !== undefined) movie.trailerUrl = trailerUrl || '';
         if (adultPrice !== undefined) {
-            const nextAdultPrice = Number(adultPrice) || 15000;
+            const nextAdultPrice = parseTicketPrice(adultPrice, movie.adultPrice || 15000);
             movie.adultPrice = nextAdultPrice;
             schedulePriceUpdate.basePrice = nextAdultPrice;
         }
         if (childPrice !== undefined) {
-            const nextChildPrice = Number(childPrice) || 10000;
+            const nextChildPrice = parseTicketPrice(childPrice, movie.childPrice || 10000);
             movie.childPrice = nextChildPrice;
             schedulePriceUpdate.childPrice = nextChildPrice;
         }

@@ -117,8 +117,9 @@ const markExpiredActiveBookings = async () => {
 
 // ── Helper: scheduleId олох ───────────────────────────────────────────────────
 async function resolveScheduleId(scheduleId, movieId, date, time) {
-  if (scheduleId) return scheduleId;
+  if (scheduleId && /^[a-f\d]{24}$/i.test(String(scheduleId))) return scheduleId;
   if (!movieId || !date) return null;
+  if (!/^[a-f\d]{24}$/i.test(String(movieId))) return null;
 
   const allSchedules = await Schedule.find({
     movie: movieId,
@@ -255,7 +256,7 @@ export const createBooking = async (req, res) => {
     });
 
   } catch (err) {
-    if (err?.name === 'ValidationError' && selectedSeats?.length) {
+    if (resolvedScheduleId && selectedSeats?.length) {
       await Schedule.findByIdAndUpdate(resolvedScheduleId, {
         $pull: { soldSeats: { $in: selectedSeats } },
       }).catch(() => {});
