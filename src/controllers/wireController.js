@@ -25,7 +25,8 @@ const getWireReturnUrl = (bookingId, providedUrl) => {
   return `${getFrontendUrl()}/ticket-verify/${bookingId}`;
 };
 
-const toWireMntAmount = (amount) => Math.round(Number(amount || 0));
+const toWireMntAmount = (amount) => Math.round(Number(amount || 0) * 100);
+const fromWireMntAmount = (amount) => Number(amount || 0) / 100;
 
 const escapeHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;')
@@ -219,8 +220,17 @@ export const createWireCheckout = async (req, res) => {
     if (existingPaymentIntentId && booking.payment?.status === 'pending') {
       try {
         const existingIntent = await retrievePaymentIntent(existingPaymentIntentId, { wireAmount });
+        const existingAmountMatches = (
+          Number(existingIntent.amount) === wireAmount &&
+          existingIntent.currency === 'MNT'
+        );
 
         if (existingIntent.status === 'succeeded') {
+          await verifyPaidIntentForBooking({
+            paymentIntentId: existingPaymentIntentId,
+            booking,
+            intent: existingIntent,
+          });
           const fulfilled = await markBookingPaidAndNotify({
             bookingId: booking._id,
             paymentMethod: 'wire',
@@ -240,7 +250,7 @@ export const createWireCheckout = async (req, res) => {
           });
         }
 
-        if (reusableWireStatuses.has(String(existingIntent.status || '').toLowerCase())) {
+        if (existingAmountMatches && reusableWireStatuses.has(String(existingIntent.status || '').toLowerCase())) {
           const checkoutUrl = extractActionUrl(existingIntent.next_action);
           if (!checkoutUrl) {
             storeWireActionPage({
@@ -373,7 +383,7 @@ export const renderWireActionCheckout = async (req, res) => {
   }
 
   const view = collectPaymentActionView(page.nextAction);
-  const amountText = Number(page.amount || 0).toLocaleString('mn-MN');
+  const amountText = fromWireMntAmount(page.amount).toLocaleString('mn-MN');
   const linkButtons = view.links.map((link) => `
     <a class="pay-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">
       <span>${escapeHtml(link.label)}</span>
@@ -424,7 +434,7 @@ export const renderWireActionCheckout = async (req, res) => {
       <div class="qr-wrap">${qrImages}</div>
       <div class="links">${linkButtons}</div>
       ${qrTexts}
-      ${!qrImages && !linkButtons && !qrTexts ? '<div class="empty">Wire төлбөрийн мэдээлэл ирсэн боловч харуулах QR эсвэл холбоос олдсонгүй. Захиалгаас дахин оролдоно уу.</div>' : ''}
+      ${!qrImages && !linkButtons && !qrTexts ? '<div class="empty">Төлбөрийн мэдээлэл ирсэн боловч харуулах QR эсвэл холбоос олдсонгүй. Захиалгаас дахин оролдоно уу.</div>' : ''}
       <div id="status" class="status">Төлбөр шалгаж байна...</div>
       <div class="muted">Энэ цонхыг хаахгүй байвал төлөгдмөгц автоматаар шилжинэ.</div>
     </main>

@@ -211,7 +211,7 @@ export const createPaymentIntent = ({ bookingId, wireAmount, allowedOperators })
 
   return wireRequest('/payment_intents', {
     payload,
-    idempotencyKey: `wire-pi-${bookingId}`,
+    idempotencyKey: `wire-pi-${bookingId}-${wireAmount}`,
   });
 };
 
@@ -280,7 +280,7 @@ export const confirmPaymentIntent = ({ bookingId, paymentIntentId, allowedOperat
       return_url: returnUrl,
       ...(operator ? { operator } : {}),
     },
-    idempotencyKey: `wire-confirm-${bookingId}`,
+    idempotencyKey: `wire-confirm-${bookingId}-${paymentIntentId}`,
   });
 };
 
