@@ -1,7 +1,7 @@
 ﻿// src/controllers/bookingController.js
 import Booking  from '../models/Booking.js';
 import Schedule from '../models/Schedule.js';
-import { sendBookingConfirmation } from '../services/Emailservice.js';
+import { sendPaidBookingEmail } from '../services/bookingFulfillmentService.js';
 
 const THEATER_TIME_ZONE = 'Asia/Hovd';
 
@@ -243,8 +243,9 @@ export const createBooking = async (req, res) => {
     }).save();
 
     // Бэлэн/кассын төлбөр бол шууд имэйл илгээнэ. External checkout (QPay/Wire) төлбөр баталгаажсаны дараа илгээнэ.
+    let emailResult = null;
     if (!['qpay', 'wire'].includes(paymentMethod) && customer.email) {
-      _sendEmail({ schedule, booking, selectedSeats, seats, customer }).catch(console.error);
+      emailResult = await sendPaidBookingEmail(booking);
     }
 
     return res.status(201).json({
@@ -253,6 +254,7 @@ export const createBooking = async (req, res) => {
       totalPrice: booking.totalPrice,
       seats:      booking.seats,
       tickets:    booking.tickets,
+      email:      emailResult,
     });
 
   } catch (err) {
@@ -294,18 +296,9 @@ export const confirmBooking = async (req, res) => {
     booking.status          = 'active';
     await booking.save();
 
-    // Баталгаажсаны дараа имэйл илгээнэ
-    if (booking.customer?.email && booking.schedule) {
-      _sendEmail({
-        schedule:      booking.schedule,
-        booking,
-        selectedSeats: booking.seats,
-        seats:         booking.seats.map(s => ({ seatId: s })),
-        customer:      booking.customer,
-      }).catch(console.error);
-    }
+    const emailResult = await sendPaidBookingEmail(booking);
 
-    return res.json({ success: true, booking });
+    return res.json({ success: true, booking, email: emailResult });
   } catch (err) {
     return res.status(500).json({ message: 'Алдаа гарлаа', error: err.message });
   }
@@ -522,52 +515,11 @@ export const resendBookingConfirmation = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Төлбөр баталгаажаагүй захиалгын имэйл илгээх боломжгүй.' });
     }
 
-    const result = await _sendEmail({
-      schedule: booking.schedule,
-      booking,
-      selectedSeats: booking.seats,
-      seats: booking.tickets?.length ? booking.tickets : booking.seats.map((seatId) => ({ seatId })),
-      customer: booking.customer,
-      force: true,
-    });
+    booking.ticketEmailSentAt = null;
+    const result = await sendPaidBookingEmail(booking);
 
     return res.json({ success: Boolean(result?.success), email: result });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Имэйл дахин илгээхэд алдаа гарлаа.', error: err.message });
   }
 };
-
-// ── Private helper: имэйл илгээх ─────────────────────────────────────────────
-async function _sendEmail({ schedule, booking, selectedSeats, seats, customer, force = false }) {
-  if (booking.ticketEmailSentAt && !force) return { success: true, skipped: true, reason: 'already_sent' };
-
-  const populatedSchedule = schedule?.movie?.title
-    ? schedule
-    : await Schedule.findById(schedule._id || schedule).populate('movie', 'title');
-
-  if (!populatedSchedule?.showTime) return;
-
-  const d = new Date(new Date(populatedSchedule.showTime).getTime() + 8 * 3600 * 1000);
-  const mnTime = `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
-  const mnDate = d.toISOString().split('T')[0];
-
-  const result = await sendBookingConfirmation({
-    to: customer.email,
-    orderId: String(booking._id),
-    movieTitle: populatedSchedule.movie?.title || 'Үзвэр',
-    date: mnDate,
-    time: mnTime,
-    hall: populatedSchedule.hall?.hallName || '—',
-    seats: selectedSeats,
-    tickets: seats,
-    totalPrice: booking.totalPrice,
-    customer,
-  });
-
-  if (result?.success) {
-    booking.ticketEmailSentAt = new Date();
-    await booking.save();
-  }
-
-  return result;
-}

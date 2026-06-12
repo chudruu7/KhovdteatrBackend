@@ -221,7 +221,28 @@ td:last-child{border-right:none;}
     return { success: false, reason: 'not_configured', resend: resendResult };
   }
 
-  const transporter = await createVerifiedTransporter(USER, PASS);
+  let transporter;
+  try {
+    transporter = await createVerifiedTransporter(USER, PASS);
+  } catch (err) {
+    console.error('[Email] ❌ SMTP холболт/нэвтрэлт амжилтгүй:', {
+      message: err.message,
+      code: err.code,
+      command: err.command,
+      response: err.response,
+      responseCode: err.responseCode,
+    });
+    return {
+      success: false,
+      reason: err.code === 'EAUTH' ? 'smtp_auth_failed' : 'smtp_connect_failed',
+      error: err.message,
+      code: err.code,
+      command: err.command,
+      response: err.response,
+      responseCode: err.responseCode,
+      resend: resendResult,
+    };
+  }
 
   try {
     console.log('[Email] 📤 Илгээж байна... To:', to);
@@ -292,7 +313,28 @@ export const sendNewMovieNotification = async ({ to, userName, movie, frontendUr
     return { success: false, reason: 'not_configured', resend: resendResult };
   }
 
-  const transporter = await createVerifiedTransporter(USER, PASS);
+  let transporter;
+  try {
+    transporter = await createVerifiedTransporter(USER, PASS);
+  } catch (err) {
+    console.error('[Email] Notification SMTP холболт/нэвтрэлт амжилтгүй:', {
+      message: err.message,
+      code: err.code,
+      command: err.command,
+      response: err.response,
+      responseCode: err.responseCode,
+    });
+    return {
+      success: false,
+      reason: err.code === 'EAUTH' ? 'smtp_auth_failed' : 'smtp_connect_failed',
+      error: err.message,
+      code: err.code,
+      command: err.command,
+      response: err.response,
+      responseCode: err.responseCode,
+      resend: resendResult,
+    };
+  }
 
   try {
     const info = await transporter.sendMail({

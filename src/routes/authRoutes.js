@@ -140,9 +140,11 @@ router.post('/social-login', async (req, res) => {
     }
 
     let user = await User.findOne({ email: normalizedEmail });
+    let isNewUser = false;
     const fallbackPassword = `${normalizedProvider}:${providerId}`;
 
     if (!user) {
+      isNewUser = true;
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(fallbackPassword, salt);
       user = new User({
@@ -174,6 +176,7 @@ router.post('/social-login', async (req, res) => {
       success: true,
       token: createToken(user),
       user: toUserData(user),
+      isNewUser,
     });
   } catch (error) {
     console.error('Social login error:', error);

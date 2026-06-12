@@ -8,7 +8,7 @@ import {
 } from '../services/qpayService.js';
 import mongoose from 'mongoose';
 import Booking from '../models/Booking.js';
-import { sendBookingConfirmation } from '../services/Emailservice.js';
+import { sendPaidBookingEmail as sendPaidBookingEmailShared } from '../services/bookingFulfillmentService.js';
 
 const THEATER_TIME_ZONE = 'Asia/Hovd';
 
@@ -34,6 +34,7 @@ const formatTheaterDateTime = (value) => {
 };
 
 const sendPaidBookingEmail = async (booking) => {
+  return sendPaidBookingEmailShared(booking);
   console.log('[QPay/Email] ── sendPaidBookingEmail эхэллээ ──');
   console.log('[QPay/Email] Booking ID:', booking?._id);
   console.log('[QPay/Email] Customer email:', booking?.customer?.email);
