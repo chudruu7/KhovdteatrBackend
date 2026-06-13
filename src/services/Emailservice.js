@@ -73,7 +73,7 @@ const createVerifiedTransporter = async (USER, PASS) => {
 const getEmailFrom = (fallbackUser) => (
   process.env.EMAIL_FROM ||
   process.env.RESEND_FROM ||
-  (fallbackUser ? `"Үзвэр Театр" <${fallbackUser}>` : 'Khovd Teatr <onboarding@resend.dev>')
+  (fallbackUser ? `"Хөгжимт Драмын Театр" <${fallbackUser}>` : 'Khovd Teatr <onboarding@resend.dev>')
 );
 
 const sendViaResend = async ({ to, subject, html, text, fallbackUser }) => {
@@ -111,6 +111,38 @@ const sendViaResend = async ({ to, subject, html, text, fallbackUser }) => {
     console.error('[Email/Resend] Илгээхэд алдаа:', err.message);
     return { configured: true, success: false, provider: 'resend', error: err.message };
   }
+};
+
+const getFrontendUrl = () => (
+  process.env.FRONTEND_URL ||
+  process.env.CLIENT_URL ||
+  'https://khovdteatr-web-pied.vercel.app'
+).replace(/\/$/, '');
+
+const escapeHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
+const buildTicketVerifyUrl = (orderId) => `${getFrontendUrl()}/ticket-verify/${encodeURIComponent(orderId)}`;
+const buildQrImageUrl = (value) => `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=14&data=${encodeURIComponent(value)}`;
+const formatTicketType = (type) => (type === 'child' ? 'Хүүхэд' : 'Том хүн');
+const formatMoney = (value) => `${Number(value || 0).toLocaleString('mn-MN')}₮`;
+
+const buildGoogleCalendarUrl = ({ movieTitle, date, time, hall, orderId }) => {
+  const start = new Date(`${date}T${time || '00:00'}:00+07:00`);
+  const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+  const toGoogleDate = (value) => value.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: movieTitle || 'Тасалбар',
+    dates: `${toGoogleDate(start)}/${toGoogleDate(end)}`,
+    details: `Захиалгын дугаар: ${orderId}\nТасалбар шалгах: ${buildTicketVerifyUrl(orderId)}\nҮзвэр эхлэхээс 10-15 минутын өмнө ирнэ үү.`,
+    location: hall || 'Ховд аймаг Хөгжимт драмын театр',
+  });
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
 };
 
 export const sendBookingConfirmation = async ({
@@ -210,7 +242,100 @@ td:last-child{border-right:none;}
   const subject = `🎫 Тасалбар: ${movieTitle} — ${orderId}`;
   const text = `Захиалга амжилттай!\nДугаар: ${orderId}\nҮзвэр: ${movieTitle}\nОгноо: ${date} ${time}\nСуудал: ${seatList}\nНийт: ${money(totalPrice)}`;
 
-  const resendResult = await sendViaResend({ to, subject, html, text, fallbackUser: USER });
+  const verifyUrl = buildTicketVerifyUrl(orderId);
+  const qrImageUrl = buildQrImageUrl(verifyUrl);
+  const calendarUrl = buildGoogleCalendarUrl({ movieTitle, date, time, hall, orderId });
+  const ticketItems = (tickets?.length ? tickets : (seats || []).map((seatId) => ({ seatId, type: 'adult' })));
+  const ticketRows = ticketItems.map((ticket) => `
+    <tr>
+      <td style="padding:10px 0;border-bottom:1px solid #edf1f7;color:#111827;font-weight:800;">${escapeHtml(ticket.seatId)}</td>
+      <td style="padding:10px 0;border-bottom:1px solid #edf1f7;color:#5b6474;text-align:right;">${formatTicketType(ticket.type)}</td>
+    </tr>
+  `).join('');
+
+  const finalSubject = `Тасалбар: ${movieTitle} — ${orderId}`;
+  const finalText = `Захиалга амжилттай!\nДугаар: ${orderId}\nҮзвэр: ${movieTitle}\nОгноо: ${date} ${time}\nТанхим: ${hall || ''}\nСуудал: ${seatList}\nНийт: ${formatMoney(totalPrice)}\nQR/тасалбар: ${verifyUrl}`;
+  const finalHtml = `<!DOCTYPE html>
+<html lang="mn">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Тасалбар</title></head>
+<body style="margin:0;padding:0;background:#f7f8fc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#111827;">
+  <div style="display:none;max-height:0;overflow:hidden;">Тасалбар баталгаажлаа. Үүдэнд QR кодоо уншуулна уу.</div>
+  <div style="max-width:680px;margin:0 auto;padding:28px 14px;background:linear-gradient(135deg,#fff7ed 0%,#f8fafc 42%,#eef2ff 100%);">
+    <div style="text-align:center;margin:8px 0 22px;">
+      <div style="display:inline-block;padding:7px 12px;border-radius:999px;background:#111827;color:#ffffff;font-size:11px;font-weight:800;letter-spacing:.08em;">ТӨЛБӨР БАТАЛГААЖЛАА</div>
+      <h1 style="margin:14px 0 6px;font-size:26px;line-height:1.2;color:#111827;">${escapeHtml(movieTitle)}</h1>
+      <p style="margin:0;color:#667085;font-size:14px;">Сайн байна уу, ${escapeHtml(customer?.name || 'үзэгч')}! Үүдэнд доорх QR кодыг уншуулна уу.</p>
+    </div>
+
+    <div style="border-radius:30px;padding:1px;background:linear-gradient(135deg,rgba(255,255,255,.9),rgba(251,191,36,.5),rgba(99,102,241,.35));box-shadow:0 24px 70px rgba(31,41,55,.14);">
+      <div style="border-radius:29px;background:rgba(255,255,255,.82);border:1px solid rgba(255,255,255,.9);overflow:hidden;">
+        <div style="height:10px;background:linear-gradient(90deg,#f59e0b,#f97316,#6366f1);"></div>
+        <div style="padding:24px 24px 18px;">
+          <div style="font-size:11px;font-weight:900;letter-spacing:.16em;color:#f97316;margin-bottom:10px;">THE GLASSMORPHISM TICKET</div>
+          <div style="font-size:13px;color:#667085;margin-bottom:22px;">ХОВД АЙМАГ ХӨГЖИМТ ДРАМЫН ТЕАТР</div>
+
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0 10px;">
+            <tr>
+              <td style="width:33%;padding:14px;border-radius:18px 0 0 18px;background:rgba(248,250,252,.95);border:1px solid #eef2f7;border-right:0;">
+                <div style="font-size:10px;color:#8a94a6;font-weight:900;letter-spacing:.12em;">ОГНОО</div>
+                <div style="margin-top:6px;font-size:16px;color:#111827;font-weight:900;">${escapeHtml(date)}</div>
+              </td>
+              <td style="width:33%;padding:14px;background:rgba(248,250,252,.95);border-top:1px solid #eef2f7;border-bottom:1px solid #eef2f7;">
+                <div style="font-size:10px;color:#8a94a6;font-weight:900;letter-spacing:.12em;">ЦАГ</div>
+                <div style="margin-top:6px;font-size:16px;color:#111827;font-weight:900;">${escapeHtml(time)}</div>
+              </td>
+              <td style="width:34%;padding:14px;border-radius:0 18px 18px 0;background:rgba(248,250,252,.95);border:1px solid #eef2f7;border-left:0;">
+                <div style="font-size:10px;color:#8a94a6;font-weight:900;letter-spacing:.12em;">ТАНХИМ</div>
+                <div style="margin-top:6px;font-size:16px;color:#111827;font-weight:900;">${escapeHtml(hall || 'Танхим')}</div>
+              </td>
+            </tr>
+          </table>
+
+          <div style="margin-top:8px;padding:16px;border-radius:20px;background:#111827;color:#ffffff;">
+            <div style="font-size:11px;color:#cbd5e1;font-weight:900;letter-spacing:.14em;margin-bottom:10px;">СУУДАЛ БА АНГИЛАЛ</div>
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background:#ffffff;border-radius:14px;overflow:hidden;">
+              ${ticketRows}
+            </table>
+          </div>
+
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:16px;border-collapse:collapse;">
+            <tr>
+              <td style="padding:16px;border-radius:18px;background:#fff7ed;border:1px solid #fed7aa;">
+                <div style="font-size:11px;color:#9a3412;font-weight:900;letter-spacing:.12em;">НИЙТ ТӨЛБӨР</div>
+                <div style="margin-top:4px;font-size:26px;font-weight:950;color:#111827;">${formatMoney(totalPrice)}</div>
+              </td>
+              <td style="width:14px;"></td>
+              <td style="padding:16px;border-radius:18px;background:#eef2ff;border:1px solid #c7d2fe;">
+                <div style="font-size:11px;color:#4338ca;font-weight:900;letter-spacing:.12em;">ЗАХИАЛГА</div>
+                <div style="margin-top:6px;font-size:13px;font-weight:850;color:#111827;word-break:break-all;">${escapeHtml(orderId)}</div>
+              </td>
+            </tr>
+          </table>
+        </div>
+
+        <div style="border-top:2px dashed #e5e7eb;padding:22px 24px 26px;background:rgba(255,255,255,.9);text-align:center;">
+          <div style="font-size:12px;color:#667085;font-weight:800;margin-bottom:12px;">ҮҮДЭНД УНШУУЛАХ QR</div>
+          <div style="display:inline-block;padding:14px;border-radius:24px;background:#ffffff;border:1px solid #e5e7eb;box-shadow:0 12px 32px rgba(17,24,39,.12);">
+            <img src="${qrImageUrl}" width="240" height="240" alt="Ticket QR" style="display:block;width:240px;height:240px;border:0;"/>
+          </div>
+          <p style="margin:14px auto 0;max-width:420px;color:#667085;font-size:13px;line-height:1.55;">QR уншихгүй бол захиалгын дугаарыг хэлнэ үү: <strong style="color:#111827;">${escapeHtml(orderId)}</strong></p>
+          <div style="margin-top:18px;">
+            <a href="${verifyUrl}" style="display:inline-block;text-decoration:none;background:#111827;color:#ffffff;border-radius:14px;padding:12px 18px;font-weight:900;font-size:13px;">Тасалбар нээх</a>
+            <a href="${calendarUrl}" style="display:inline-block;text-decoration:none;background:#ffffff;color:#111827;border:1px solid #d0d5dd;border-radius:14px;padding:12px 18px;font-weight:900;font-size:13px;margin-left:8px;">Календарьт нэмэх</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin:20px 0 4px;padding:16px;border-radius:20px;background:rgba(255,255,255,.72);border:1px solid #eef2f7;color:#667085;font-size:13px;line-height:1.65;">
+      <strong style="color:#111827;">Санамж:</strong> Үзвэр эхлэхээс 10-15 минутын өмнө ирнэ үү. Тасалбар буцаах боломжгүй. QR код эсвэл захиалгын дугаараа үүдэнд үзүүлнэ.
+    </div>
+
+    <div style="text-align:center;color:#98a2b3;font-size:12px;padding:16px 0 4px;">ХОВД АЙМАГ ХӨГЖИМТ ДРАМЫН ТЕАТР</div>
+  </div>
+</body></html>`;
+
+  const resendResult = await sendViaResend({ to, subject: finalSubject, html: finalHtml, text: finalText, fallbackUser: USER });
   if (resendResult.configured) {
     if (resendResult.success) return resendResult;
     console.warn('[Email] Resend амжилтгүй тул Gmail SMTP fallback оролдоно.', resendResult.error || resendResult.status);
@@ -249,9 +374,9 @@ td:last-child{border-right:none;}
     const info = await transporter.sendMail({
       from:    getEmailFrom(USER),
       to,
-      subject,
-      html,
-      text,
+      subject: finalSubject,
+      html: finalHtml,
+      text: finalText,
     });
     console.log('[Email] ✅ Амжилттай илгээгдлээ:', info.messageId, '→', to);
     return { success: true, messageId: info.messageId };

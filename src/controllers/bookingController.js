@@ -2,6 +2,7 @@
 import Booking  from '../models/Booking.js';
 import Schedule from '../models/Schedule.js';
 import {
+  ensurePaidBookingEmailQueued,
   markBookingPaidAndNotify,
   sendPaidBookingEmail,
 } from '../services/bookingFulfillmentService.js';
@@ -98,6 +99,12 @@ const formatBookingForClient = (booking) => {
   });
 
   return formatted;
+};
+
+const queueMissingPaidEmail = (booking, source) => {
+  if (booking?.payment?.status === 'paid' && !booking.ticketEmailSentAt) {
+    ensurePaidBookingEmailQueued(booking._id, source);
+  }
 };
 
 const markExpiredActiveBookings = async () => {
@@ -331,6 +338,8 @@ export const getBookingDetails = async (req, res) => {
       return res.status(403).json({ message: 'Энэ захиалгын мэдээллийг харах эрхгүй байна.' });
     }
 
+    queueMissingPaidEmail(booking, 'get_booking_details');
+
     return res.json({ success: true, booking: formatBookingForClient(booking) });
   } catch (err) {
     return res.status(500).json({ message: 'Захиалгын мэдээлэл авах алдаа.', error: err.message });
@@ -357,6 +366,7 @@ export const verifyBookingStatus = async (req, res) => {
     }
 
     const formatted = formatBookingForClient(booking);
+    queueMissingPaidEmail(booking, 'verify_booking_status');
     return res.json({
       success: true,
       isActive: formatted.ticketStatus.isActive,
@@ -495,6 +505,7 @@ export const getMyHistory = async (req, res) => {
       .sort({ createdAt: -1 });
 
     const formatted = bookings.map(formatBookingForClient);
+    bookings.forEach((booking) => queueMissingPaidEmail(booking, 'my_history'));
 
     res.json({ success: true, bookings: formatted });
   } catch (err) {

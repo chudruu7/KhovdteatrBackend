@@ -20,6 +20,7 @@ import cleanupRoutes from './routes/cleanupRoutes.js';
 import cashierRoutes from './routes/cashierRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
 import { cancelExpiredBookings } from './controllers/bookingController.js';
+import { processUnsentPaidBookingEmails } from './services/bookingFulfillmentService.js';
 import { autoCleanupExpiredTickets, requestCleanupApproval } from './utils/cleanupService.js';
 import cron from 'node-cron';
 // Environment variable-уудыг ачаалах
@@ -142,6 +143,14 @@ app.use((err, req, res, next) => {
 });
 cancelExpiredBookings();
 setInterval(cancelExpiredBookings, 5 * 60 * 1000);
+processUnsentPaidBookingEmails().catch((err) => {
+  console.error('[Booking/Fulfillment] Initial unsent paid email scan failed:', err.message);
+});
+setInterval(() => {
+  processUnsentPaidBookingEmails().catch((err) => {
+    console.error('[Booking/Fulfillment] Scheduled unsent paid email scan failed:', err.message);
+  });
+}, 60 * 1000);
 const PORT = process.env.PORT || 5000; // Render өөрийн PORT-ыг энд дамжуулдаг
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running on port ${PORT}`);

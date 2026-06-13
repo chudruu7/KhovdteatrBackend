@@ -100,26 +100,81 @@ const sendPaidBookingEmailWithRetry = async (booking, attempts = 3) => {
   return lastResult || { success: false, reason: 'email_failed' };
 };
 
-const queuePaidBookingEmail = (booking) => {
-  const bookingKey = String(booking?._id || '');
+export const ensurePaidBookingEmailQueued = (bookingOrId, source = 'unspecified') => {
+  const bookingKey = String(bookingOrId?._id || bookingOrId || '');
   if (!bookingKey || queuedEmailBookingIds.has(bookingKey)) {
     return { success: null, queued: false, reason: 'email_already_queued' };
   }
   queuedEmailBookingIds.add(bookingKey);
   setImmediate(async () => {
+    let booking = null;
     try {
+      booking = await Booking.findById(bookingKey)
+        .populate('movie', 'title')
+        .populate({
+          path: 'schedule',
+          select: 'showTime hall movie',
+          populate: { path: 'movie', select: 'title' },
+        });
+
+      if (!booking) {
+        console.warn('[Booking/Fulfillment] Background email skipped: booking not found', {
+          bookingId: bookingKey,
+          source,
+        });
+        return;
+      }
+
+      if (booking.payment?.status !== 'paid' || booking.ticketEmailSentAt) {
+        logBookingEmailContext('Background email skipped', booking, {
+          source,
+          reason: booking.ticketEmailSentAt ? 'already_sent' : 'not_paid',
+        });
+        return;
+      }
+
       const emailResult = await sendPaidBookingEmailWithRetry(booking);
-      logBookingEmailContext('Background paid ticket email finished', booking, { emailResult });
+      logBookingEmailContext('Background paid ticket email finished', booking, { source, emailResult });
     } catch (err) {
       console.error('[Booking/Fulfillment] Background paid ticket email crashed', {
-        bookingId: String(booking?._id || ''),
+        bookingId: bookingKey,
+        source,
         error: err.message,
       });
     } finally {
       queuedEmailBookingIds.delete(bookingKey);
     }
   });
-  return { success: null, queued: true, reason: 'background_email' };
+  return { success: null, queued: true, reason: 'background_email', source };
+};
+
+export const processUnsentPaidBookingEmails = async (limit = 20) => {
+  const lookbackMinutes = Number(process.env.UNSENT_EMAIL_SCAN_LOOKBACK_MINUTES || 30);
+  const updatedAfter = new Date(Date.now() - lookbackMinutes * 60 * 1000);
+  const bookings = await Booking.find({
+    status: 'active',
+    'payment.status': 'paid',
+    ticketEmailSentAt: null,
+    updatedAt: { $gte: updatedAfter },
+  })
+    .sort({ updatedAt: -1 })
+    .limit(limit)
+    .select('_id');
+
+  let queued = 0;
+  for (const booking of bookings) {
+    const result = ensurePaidBookingEmailQueued(booking._id, 'scheduled_scan');
+    if (result.queued) queued += 1;
+  }
+
+  if (queued) {
+    console.log('[Booking/Fulfillment] Scheduled unsent paid email scan queued jobs', {
+      queued,
+      checked: bookings.length,
+    });
+  }
+
+  return { checked: bookings.length, queued };
 };
 
 export const markBookingPaidAndNotify = async ({
@@ -157,7 +212,7 @@ export const markBookingPaidAndNotify = async ({
   logBookingEmailContext('Booking marked paid', booking);
 
   if (!awaitEmail) {
-    const emailResult = queuePaidBookingEmail(booking);
+    const emailResult = ensurePaidBookingEmailQueued(booking._id, 'mark_paid');
     logBookingEmailContext('Booking paid notification queued', booking, { emailResult });
     return { booking, emailResult };
   }
