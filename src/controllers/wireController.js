@@ -308,6 +308,7 @@ export const createWireCheckout = async (req, res) => {
             bookingId: booking._id,
             paymentMethod: 'wire',
             transactionId: existingPaymentIntentId,
+            awaitEmail: false,
           });
           return res.json({
             success: true,
@@ -392,6 +393,7 @@ export const createWireCheckout = async (req, res) => {
         bookingId: booking._id,
         paymentMethod: 'wire',
         transactionId: paymentIntent.id,
+        awaitEmail: false,
       });
       emailResult = fulfilled.emailResult;
     }
@@ -562,6 +564,7 @@ export const getWireActionCheckoutStatus = async (req, res) => {
         bookingId: booking._id,
         paymentMethod: booking.payment?.method || 'wire',
         transactionId: booking.payment?.transactionId,
+        awaitEmail: false,
       }).then((result) => result.emailResult).catch((err) => ({ success: false, error: err.message }));
       return res.json({
         success: true,
@@ -584,6 +587,7 @@ export const getWireActionCheckoutStatus = async (req, res) => {
         bookingId: booking._id,
         paymentMethod: 'wire',
         transactionId: req.params.paymentIntentId,
+        awaitEmail: false,
       });
       return res.json({
         success: true,
@@ -614,6 +618,7 @@ export const getWirePaymentStatus = async (req, res) => {
         bookingId: booking._id,
         paymentMethod: booking.payment?.method || 'wire',
         transactionId: booking.payment?.transactionId,
+        awaitEmail: false,
       }).then((result) => result.emailResult).catch((err) => ({ success: false, error: err.message }));
       return res.json({ success: true, paid: true, bookingId: booking._id, status: 'paid', email: emailResult, transactionReference: getPaymentReference(booking._id) });
     }
@@ -632,6 +637,7 @@ export const getWirePaymentStatus = async (req, res) => {
         bookingId: booking._id,
         paymentMethod: 'wire',
         transactionId: paymentIntentId,
+        awaitEmail: false,
       });
       return res.json({ success: true, paid: true, bookingId: booking._id, status: 'paid', email: emailResult, transactionReference: getPaymentReference(booking._id) });
     }
@@ -679,6 +685,7 @@ export const handleWireWebhook = async (req, res) => {
       bookingId,
       paymentMethod: 'wire',
       transactionId: paymentIntentId,
+      awaitEmail: false,
     });
 
     return res.json({ received: true, email: emailResult });

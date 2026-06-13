@@ -25,6 +25,7 @@ const formatTheaterDateTime = (value) => {
 };
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const queuedEmailBookingIds = new Set();
 
 const logBookingEmailContext = (label, booking, extra = {}) => {
   console.log(`[Booking/Fulfillment] ${label}`, {
@@ -99,7 +100,34 @@ const sendPaidBookingEmailWithRetry = async (booking, attempts = 3) => {
   return lastResult || { success: false, reason: 'email_failed' };
 };
 
-export const markBookingPaidAndNotify = async ({ bookingId, paymentMethod, transactionId }) => {
+const queuePaidBookingEmail = (booking) => {
+  const bookingKey = String(booking?._id || '');
+  if (!bookingKey || queuedEmailBookingIds.has(bookingKey)) {
+    return { success: null, queued: false, reason: 'email_already_queued' };
+  }
+  queuedEmailBookingIds.add(bookingKey);
+  setImmediate(async () => {
+    try {
+      const emailResult = await sendPaidBookingEmailWithRetry(booking);
+      logBookingEmailContext('Background paid ticket email finished', booking, { emailResult });
+    } catch (err) {
+      console.error('[Booking/Fulfillment] Background paid ticket email crashed', {
+        bookingId: String(booking?._id || ''),
+        error: err.message,
+      });
+    } finally {
+      queuedEmailBookingIds.delete(bookingKey);
+    }
+  });
+  return { success: null, queued: true, reason: 'background_email' };
+};
+
+export const markBookingPaidAndNotify = async ({
+  bookingId,
+  paymentMethod,
+  transactionId,
+  awaitEmail = true,
+}) => {
   const booking = await Booking.findById(bookingId)
     .populate('movie', 'title')
     .populate({
@@ -127,6 +155,12 @@ export const markBookingPaidAndNotify = async ({ bookingId, paymentMethod, trans
   await booking.save();
 
   logBookingEmailContext('Booking marked paid', booking);
+
+  if (!awaitEmail) {
+    const emailResult = queuePaidBookingEmail(booking);
+    logBookingEmailContext('Booking paid notification queued', booking, { emailResult });
+    return { booking, emailResult };
+  }
 
   const emailResult = await sendPaidBookingEmailWithRetry(booking);
   logBookingEmailContext('Booking paid notification finished', booking, { emailResult });

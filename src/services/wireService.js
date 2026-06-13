@@ -1,4 +1,5 @@
 const WIRE_BASE_URL = process.env.WIRE_API_BASE_URL || 'https://api.wire.mn/v1';
+const WIRE_API_TIMEOUT_MS = Number(process.env.WIRE_API_TIMEOUT_MS || 10000);
 const sandboxIntents = new Map();
 const actionPages = new Map();
 
@@ -71,6 +72,8 @@ const wireRequest = async (path, { method = 'POST', payload, idempotencyKey, que
   });
 
   let response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), WIRE_API_TIMEOUT_MS);
   try {
     response = await fetch(url, {
       method,
@@ -80,12 +83,17 @@ const wireRequest = async (path, { method = 'POST', payload, idempotencyKey, que
         ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
       },
       body: payload ? JSON.stringify(payload) : undefined,
+      signal: controller.signal,
     });
   } catch (cause) {
-    const err = new Error(`Wire API host is not reachable: ${url.origin}`);
+    const err = new Error(cause?.name === 'AbortError'
+      ? `Wire API request timed out after ${WIRE_API_TIMEOUT_MS}ms: ${path}`
+      : `Wire API host is not reachable: ${url.origin}`);
     err.statusCode = 502;
     err.details = { error: { message: cause?.message || String(cause) } };
     throw err;
+  } finally {
+    clearTimeout(timeout);
   }
 
   const raw = await response.text();
