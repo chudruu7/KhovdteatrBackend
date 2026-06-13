@@ -7,7 +7,7 @@ import {
   sendPaidBookingEmail,
 } from '../services/bookingFulfillmentService.js';
 
-const THEATER_TIME_ZONE = 'Asia/Hovd';
+const THEATER_TIME_ZONE = 'Asia/Ulaanbaatar';
 
 const formatTheaterDateTime = (value) => {
   if (!value) return { dateISO: '', date: '', time: '' };

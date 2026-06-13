@@ -3,6 +3,7 @@ import Booking from '../models/Booking.js';
 import {
   confirmPaymentIntent,
   createPaymentIntent,
+  enrichPaymentActionReferences,
   extractActionUrl,
   getDefaultAllowedOperators,
   getWireActionPage,
@@ -202,7 +203,7 @@ const buildWireCheckoutData = ({
   paymentIntentId,
   paymentIntentStatus: intent?.status || 'pending',
   checkoutUrl,
-  nextAction: intent?.next_action || null,
+  nextAction: enrichPaymentActionReferences(intent?.next_action || null, transactionReference),
   amount,
   allowedOperators,
   selectedOperator: intent?.selected_operator,
@@ -215,19 +216,20 @@ const buildWireCheckoutData = ({
 });
 
 const getWireCheckoutUrlForIntent = ({ intent, paymentIntentId, bookingId }) => (
-  extractActionUrl(intent?.next_action) ||
+  extractActionUrl(enrichPaymentActionReferences(intent?.next_action, bookingId)) ||
   (intent?.status === 'succeeded' ? `${getFrontendUrl()}/ticket-verify/${bookingId}` : null) ||
   getWireActionPageUrl(paymentIntentId)
 );
 
 const storeActionPageIfNeeded = ({ intent, paymentIntentId, bookingId, amount }) => {
-  const checkoutUrl = extractActionUrl(intent?.next_action);
+  const nextAction = enrichPaymentActionReferences(intent?.next_action || intent, bookingId);
+  const checkoutUrl = extractActionUrl(nextAction);
   if (!checkoutUrl && intent?.status !== 'succeeded') {
     storeWireActionPage({
       paymentIntentId,
       bookingId: String(bookingId),
       amount,
-      nextAction: intent?.next_action || intent,
+      nextAction,
     });
   }
 };
@@ -326,13 +328,17 @@ export const createWireCheckout = async (req, res) => {
         }
 
         if (existingAmountMatches && reusableWireStatuses.has(String(existingIntent.status || '').toLowerCase())) {
-          const checkoutUrl = extractActionUrl(existingIntent.next_action);
+          const existingNextAction = enrichPaymentActionReferences(
+            existingIntent.next_action || existingIntent,
+            booking._id,
+          );
+          const checkoutUrl = extractActionUrl(existingNextAction);
           if (!checkoutUrl) {
             storeWireActionPage({
               paymentIntentId: existingPaymentIntentId,
               bookingId: String(booking._id),
               amount: wireAmount,
-              nextAction: existingIntent.next_action || existingIntent,
+              nextAction: existingNextAction,
             });
           }
 

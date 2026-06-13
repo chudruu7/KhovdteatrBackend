@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import Booking from '../models/Booking.js';
 import CashierScan from '../models/CashierScan.js';
 
-const THEATER_TIME_ZONE = 'Asia/Hovd';
+const THEATER_TIME_ZONE = 'Asia/Ulaanbaatar';
 const ENTRY_BEFORE_MINUTES = 90;
 const ENTRY_AFTER_MINUTES = 30;
 

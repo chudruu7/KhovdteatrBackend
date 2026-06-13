@@ -168,17 +168,123 @@ const getPaymentReferenceFields = (bookingId) => {
   const transactionReference = getPaymentReference(bookingId);
   return {
     description: transactionReference,
+    note: transactionReference,
+    memo: transactionReference,
+    purpose: transactionReference,
+    comment: transactionReference,
     reference: transactionReference,
     payment_reference: transactionReference,
+    payment_description: transactionReference,
     transaction_reference: transactionReference,
+    transaction_description: transactionReference,
     statement_descriptor: transactionReference,
     metadata: {
       booking_id: String(bookingId),
       reference: transactionReference,
       payment_reference: transactionReference,
       transaction_reference: transactionReference,
+      description: transactionReference,
     },
   };
+};
+
+const referenceQueryKeys = [
+  'description',
+  'desc',
+  'note',
+  'memo',
+  'purpose',
+  'comment',
+  'remarks',
+  'remark',
+  'message',
+  'reference',
+  'ref',
+  'payment_reference',
+  'paymentReference',
+  'payment_description',
+  'paymentDescription',
+  'transaction_reference',
+  'transactionReference',
+  'transaction_description',
+  'transactionDescription',
+  'statement_descriptor',
+  'value',
+  'utga',
+];
+
+const isMissingReferenceValue = (value) => (
+  value === null ||
+  value === undefined ||
+  value === '' ||
+  /^null$/i.test(String(value)) ||
+  /^undefined$/i.test(String(value))
+);
+
+const withReferenceQueryParams = (url, transactionReference) => {
+  if (!transactionReference || !isActionUrl(url) || isAssetUrl(url)) return url;
+
+  try {
+    const parsed = new URL(url);
+    referenceQueryKeys.forEach((key) => {
+      if (!parsed.searchParams.has(key) || isMissingReferenceValue(parsed.searchParams.get(key))) {
+        parsed.searchParams.set(key, transactionReference);
+      }
+    });
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+};
+
+export const enrichPaymentActionReferences = (value, bookingId) => {
+  const transactionReference = String(bookingId || '').startsWith('KDT-')
+    ? String(bookingId)
+    : getPaymentReference(bookingId);
+  if (!value || !transactionReference) return value;
+
+  if (typeof value === 'string') {
+    return withReferenceQueryParams(value, transactionReference);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => enrichPaymentActionReferences(item, bookingId));
+  }
+
+  if (typeof value === 'object') {
+    const next = {};
+    Object.entries(value).forEach(([key, item]) => {
+      const lowerKey = key.toLowerCase();
+      if (
+        typeof item === 'string' &&
+        (/url|link|deeplink|checkout|redirect|web/.test(lowerKey))
+      ) {
+        next[key] = withReferenceQueryParams(item, transactionReference);
+        return;
+      }
+
+      if (
+        /description|desc|note|memo|purpose|comment|remark|message|reference|descriptor|utga/.test(lowerKey) &&
+        isMissingReferenceValue(item)
+      ) {
+        next[key] = transactionReference;
+        return;
+      }
+
+      next[key] = enrichPaymentActionReferences(item, bookingId);
+    });
+
+    return {
+      ...next,
+      description: next.description || transactionReference,
+      reference: next.reference || transactionReference,
+      payment_reference: next.payment_reference || transactionReference,
+      transaction_reference: next.transaction_reference || transactionReference,
+      transaction_description: next.transaction_description || transactionReference,
+    };
+  }
+
+  return value;
 };
 
 export const getWireActionPageUrl = (paymentIntentId) => (
