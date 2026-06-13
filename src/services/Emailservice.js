@@ -177,7 +177,7 @@ td:last-child{border-right:none;}
   <div class="box">
     <div class="badge">ТАСАЛБАР</div>
     <div class="title">${movieTitle}</div>
-    <div class="sub">● ХОВД АЙМАГ ХӨГЖИМТ КИНО ТЕАТР</div>
+    <div class="sub">● ХОВД АЙМАГ ХӨГЖИМТ ДРАМЫН ТЕАТР</div>
     <table>
       <tr>
         <td><span class="lbl">Огноо</span><span class="val">${date}</span></td>
@@ -204,7 +204,7 @@ td:last-child{border-right:none;}
     <div class="note">⏰ Үзвэр эхлэхээс 15 минутын өмнө ирнэ үү.<br/>ℹ️ Тасалбар буцаах боломжгүй.<br/>📞 Лавлах: +976 7038-0000</div>
   </div>
 </div>
-<div class="footer">ХОВД АЙМАГ ХӨГЖИМТ КИНО ТЕАТР<br/>Энэхүү и-мэйлийг автоматаар илгээсэн болно.</div>
+<div class="footer">ХОВД АЙМАГ ХӨГЖИМТ ДРАМЫН ТЕАТР<br/>Энэхүү и-мэйлийг автоматаар илгээсэн болно.</div>
 </div></body></html>`;
 
   const subject = `🎫 Тасалбар: ${movieTitle} — ${orderId}`;

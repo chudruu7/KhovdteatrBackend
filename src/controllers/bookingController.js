@@ -160,7 +160,7 @@ const getSchedulePrices = (schedule) => ({
 export const createBooking = async (req, res) => {
   console.log('📦 Booking payload:', JSON.stringify(req.body, null, 2));
 
-  const { scheduleId, movieId, date, time, seats, totalPrice, customer, paymentMethod = 'qpay' } = req.body;
+  const { scheduleId, movieId, date, time, seats, totalPrice, customer, paymentMethod = 'wire' } = req.body;
   let resolvedScheduleId = null;
   let selectedSeats = [];
 
@@ -224,7 +224,7 @@ export const createBooking = async (req, res) => {
     });
     const computedTotalPrice = ticketDetails.reduce((sum, ticket) => sum + ticket.price, 0);
 
-    // Booking үүсгэх — QPay урсгалд payment.status = 'pending'
+    // Booking үүсгэх — Wire урсгалд payment.status = 'pending'
     const booking = await new Booking({
       schedule:   resolvedScheduleId,
       movie:      schedule.movie || movieId,
@@ -237,14 +237,14 @@ export const createBooking = async (req, res) => {
       payment: {
         method:        paymentMethod,
         transactionId: `TRX-${Date.now()}`,
-        status:        ['qpay', 'wire'].includes(paymentMethod) ? 'pending' : 'paid',
+        status:        paymentMethod === 'wire' ? 'pending' : 'paid',
       },
       expiredAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     }).save();
 
-    // Бэлэн/кассын төлбөр бол шууд имэйл илгээнэ. External checkout (QPay/Wire) төлбөр баталгаажсаны дараа илгээнэ.
+    // Бэлэн/кассын төлбөр бол шууд имэйл илгээнэ. Wire checkout төлбөр баталгаажсаны дараа илгээнэ.
     let emailResult = null;
-    if (!['qpay', 'wire'].includes(paymentMethod) && customer.email) {
+    if (paymentMethod !== 'wire' && customer.email) {
       emailResult = await sendPaidBookingEmail(booking);
     }
 
@@ -267,7 +267,7 @@ export const createBooking = async (req, res) => {
   }
 };
 
-// @desc  QPay төлбөр амжилттай болсны дараа booking баталгаажуулах
+// @desc  External төлбөр амжилттай болсны дараа booking баталгаажуулах
 // @route POST /api/bookings/:id/confirm
 export const confirmBooking = async (req, res) => {
   try {
@@ -292,7 +292,7 @@ export const confirmBooking = async (req, res) => {
     }
 
     booking.payment.status  = 'paid';
-    booking.payment.method  = 'qpay';
+    booking.payment.method  = booking.payment.method || 'wire';
     booking.status          = 'active';
     await booking.save();
 

@@ -147,6 +147,10 @@ const getSandboxCheckoutUrl = (paymentIntentId) => (
   `${getPublicApiUrl()}/api/wire/sandbox/checkout/${paymentIntentId}`
 );
 
+export const getPaymentReference = (bookingId) => (
+  `KDT-${String(bookingId || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase()}`
+);
+
 export const getWireActionPageUrl = (paymentIntentId) => (
   `${getPublicApiUrl()}/api/wire/checkout/action/${encodeURIComponent(paymentIntentId)}`
 );
@@ -171,6 +175,7 @@ export const getWireActionPage = (paymentIntentId) => {
 };
 
 const createLocalSandboxPaymentIntent = ({ bookingId, wireAmount, allowedOperators }) => {
+  const transactionReference = getPaymentReference(bookingId);
   const id = `pi_test_${bookingId}`;
   const intent = {
     id,
@@ -183,7 +188,8 @@ const createLocalSandboxPaymentIntent = ({ bookingId, wireAmount, allowedOperato
     allowed_operators: allowedOperators?.length ? allowedOperators : ['sandbox'],
     selected_operator: 'sandbox',
     next_action: null,
-    metadata: { booking_id: bookingId },
+    metadata: { booking_id: bookingId, transaction_reference: transactionReference },
+    description: transactionReference,
     livemode: false,
     created: Math.floor(Date.now() / 1000),
     expires_at: Math.floor(Date.now() / 1000) + 600,
@@ -201,12 +207,14 @@ export const createPaymentIntent = ({ bookingId, wireAmount, allowedOperators })
   assertSafeWireMode(getApiKey());
   assertLiveOperators(allowedOperators);
 
+  const transactionReference = getPaymentReference(bookingId);
   const payload = {
     amount: wireAmount,
     currency: 'MNT',
     automatic_operator: shouldUseAutomaticOperator(allowedOperators),
     allowed_operators: allowedOperators,
-    metadata: { booking_id: bookingId },
+    metadata: { booking_id: bookingId, transaction_reference: transactionReference },
+    description: transactionReference,
   };
 
   return wireRequest('/payment_intents', {

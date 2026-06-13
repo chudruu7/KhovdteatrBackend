@@ -7,6 +7,7 @@ import {
   getDefaultAllowedOperators,
   getWireActionPage,
   getWireActionPageUrl,
+  getPaymentReference,
   isLocalWireSandbox,
   isWireTestMode,
   retrievePaymentIntent,
@@ -182,6 +183,7 @@ const buildWireCheckoutData = ({
   allowedOperators,
   emailResult = null,
   reused = false,
+  transactionReference,
 }) => ({
   paymentIntentId,
   paymentIntentStatus: intent?.status || 'pending',
@@ -195,6 +197,7 @@ const buildWireCheckoutData = ({
   testMode: isWireTestMode(),
   email: emailResult,
   reused,
+  transactionReference,
 });
 
 export const createWireCheckout = async (req, res) => {
@@ -212,6 +215,7 @@ export const createWireCheckout = async (req, res) => {
     }
 
     const wireAmount = toWireMntAmount(booking.totalPrice);
+    const transactionReference = getPaymentReference(booking._id);
     if (!wireAmount) return res.status(400).json({ success: false, message: 'Төлбөрийн дүн олдсонгүй.' });
 
     const allowedOperators = getDefaultAllowedOperators();
@@ -246,6 +250,7 @@ export const createWireCheckout = async (req, res) => {
               allowedOperators,
               emailResult: fulfilled.emailResult,
               reused: true,
+              transactionReference,
             }),
           });
         }
@@ -270,6 +275,7 @@ export const createWireCheckout = async (req, res) => {
               amount: wireAmount,
               allowedOperators,
               reused: true,
+              transactionReference,
             }),
           });
         }
@@ -334,12 +340,13 @@ export const createWireCheckout = async (req, res) => {
         amount: wireAmount,
         allowedOperators,
         emailResult,
+        transactionReference,
       }),
     });
   } catch (err) {
     return res.status(err.statusCode || 500).json({
       success: false,
-      message: err.message || 'Wire checkout үүсгэхэд алдаа гарлаа.',
+      message: err.message || 'QR үүсгэхэд алдаа гарлаа.',
       error: err.details || err.message,
     });
   }
@@ -404,7 +411,7 @@ export const renderWireActionCheckout = async (req, res) => {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Wire checkout</title>
+    <title>Төлбөр</title>
     <style>
       * { box-sizing: border-box; }
       body { margin: 0; min-height: 100vh; font-family: Arial, sans-serif; background: #f4f7f6; color: #10231d; display: grid; place-items: center; padding: 18px; }
@@ -464,7 +471,7 @@ export const renderWireActionCheckout = async (req, res) => {
         }
       }
       checkPaid();
-      setInterval(checkPaid, 2500);
+      setInterval(checkPaid, 1000);
     </script>
   </body>
 </html>`);
@@ -479,11 +486,18 @@ export const getWireActionCheckoutStatus = async (req, res) => {
     if (!booking) return res.status(404).json({ success: false, paid: false, message: 'Booking not found.' });
 
     if (booking.payment?.status === 'paid') {
+      const emailResult = booking.ticketEmailSentAt ? null : await markBookingPaidAndNotify({
+        bookingId: booking._id,
+        paymentMethod: booking.payment?.method || 'wire',
+        transactionId: booking.payment?.transactionId,
+      }).then((result) => result.emailResult).catch((err) => ({ success: false, error: err.message }));
       return res.json({
         success: true,
         paid: true,
         bookingId: booking._id,
         status: 'paid',
+        email: emailResult,
+        transactionReference: getPaymentReference(booking._id),
         redirectUrl: `${getFrontendUrl()}/ticket-verify/${booking._id}`,
       });
     }
@@ -504,11 +518,12 @@ export const getWireActionCheckoutStatus = async (req, res) => {
         paid: true,
         bookingId: booking._id,
         status: 'paid',
+        transactionReference: getPaymentReference(booking._id),
         redirectUrl: `${getFrontendUrl()}/ticket-verify/${booking._id}`,
       });
     }
 
-    return res.json({ success: true, paid: false, bookingId: booking._id, status: intent.status || 'pending' });
+    return res.json({ success: true, paid: false, bookingId: booking._id, status: intent.status || 'pending', transactionReference: getPaymentReference(booking._id) });
   } catch (err) {
     return res.status(err.statusCode || 500).json({ success: false, paid: false, message: err.message, error: err.details || err.message });
   }
@@ -523,12 +538,17 @@ export const getWirePaymentStatus = async (req, res) => {
     }
 
     if (booking.payment?.status === 'paid') {
-      return res.json({ success: true, paid: true, bookingId: booking._id, status: 'paid' });
+      const emailResult = booking.ticketEmailSentAt ? null : await markBookingPaidAndNotify({
+        bookingId: booking._id,
+        paymentMethod: booking.payment?.method || 'wire',
+        transactionId: booking.payment?.transactionId,
+      }).then((result) => result.emailResult).catch((err) => ({ success: false, error: err.message }));
+      return res.json({ success: true, paid: true, bookingId: booking._id, status: 'paid', email: emailResult, transactionReference: getPaymentReference(booking._id) });
     }
 
     const paymentIntentId = booking.payment?.transactionId;
     if (!paymentIntentId) {
-      return res.json({ success: true, paid: false, bookingId: booking._id, status: booking.payment?.status || 'pending' });
+      return res.json({ success: true, paid: false, bookingId: booking._id, status: booking.payment?.status || 'pending', transactionReference: getPaymentReference(booking._id) });
     }
 
     const intent = await retrievePaymentIntent(paymentIntentId, {
@@ -541,10 +561,10 @@ export const getWirePaymentStatus = async (req, res) => {
         paymentMethod: 'wire',
         transactionId: paymentIntentId,
       });
-      return res.json({ success: true, paid: true, bookingId: booking._id, status: 'paid', email: emailResult });
+      return res.json({ success: true, paid: true, bookingId: booking._id, status: 'paid', email: emailResult, transactionReference: getPaymentReference(booking._id) });
     }
 
-    return res.json({ success: true, paid: false, bookingId: booking._id, status: intent.status || 'pending' });
+    return res.json({ success: true, paid: false, bookingId: booking._id, status: intent.status || 'pending', transactionReference: getPaymentReference(booking._id) });
   } catch (err) {
     return res.status(err.statusCode || 500).json({ success: false, message: err.message, error: err.details || err.message });
   }

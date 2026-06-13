@@ -22,7 +22,7 @@ router.get('/my-history', protect, getMyHistory);
 router.get   ('/stats',          protect, getBookingStats);
 router.get   ('/',               protect, getAllBookings);
 router.post  ('/',               protect, createBooking);
-router.post  ('/:id/confirm',    protect, confirmBooking);   // ← QPay callback дараа дуудна
+router.post  ('/:id/confirm',    protect, confirmBooking);
 router.post  ('/:id/resend-confirmation', protect, resendBookingConfirmation);
 router.post  ('/:id/cancel',     protect, cancelBooking);
 // ✅ Dynamic route-ууд ХАМГИЙН СҮҮЛД

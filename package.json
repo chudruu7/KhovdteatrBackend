@@ -16,7 +16,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@togtokh.dev/qpay": "^0.1.5",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -25,8 +24,7 @@
     "mongodb": "^7.1.0",
     "mongoose": "^8.3.2",
     "node-cron": "^4.2.1",
-    "nodemailer": "^8.0.2",
-    "qpay-quick": "^1.0.13"
+    "nodemailer": "^8.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
