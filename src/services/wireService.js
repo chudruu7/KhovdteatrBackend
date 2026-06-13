@@ -49,6 +49,11 @@ const getWireErrorMessage = (data, fallbackStatus) => (
   `Wire API error: ${fallbackStatus}`
 );
 
+const isPayloadFieldError = (err) => (
+  [400, 422].includes(Number(err?.statusCode)) &&
+  /unknown|unrecognized|invalid|not allowed|unexpected|unsupported/i.test(JSON.stringify(err?.details || err?.message || ''))
+);
+
 const wireRequest = async (path, { method = 'POST', payload, idempotencyKey, query } = {}) => {
   const apiKey = getApiKey();
   if (!apiKey && !isLocalWireSandbox()) {
@@ -151,6 +156,23 @@ export const getPaymentReference = (bookingId) => (
   `KDT-${String(bookingId || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase()}`
 );
 
+const getPaymentReferenceFields = (bookingId) => {
+  const transactionReference = getPaymentReference(bookingId);
+  return {
+    description: transactionReference,
+    reference: transactionReference,
+    payment_reference: transactionReference,
+    transaction_reference: transactionReference,
+    statement_descriptor: transactionReference,
+    metadata: {
+      booking_id: String(bookingId),
+      reference: transactionReference,
+      payment_reference: transactionReference,
+      transaction_reference: transactionReference,
+    },
+  };
+};
+
 export const getWireActionPageUrl = (paymentIntentId) => (
   `${getPublicApiUrl()}/api/wire/checkout/action/${encodeURIComponent(paymentIntentId)}`
 );
@@ -175,7 +197,6 @@ export const getWireActionPage = (paymentIntentId) => {
 };
 
 const createLocalSandboxPaymentIntent = ({ bookingId, wireAmount, allowedOperators }) => {
-  const transactionReference = getPaymentReference(bookingId);
   const id = `pi_test_${bookingId}`;
   const intent = {
     id,
@@ -188,8 +209,7 @@ const createLocalSandboxPaymentIntent = ({ bookingId, wireAmount, allowedOperato
     allowed_operators: allowedOperators?.length ? allowedOperators : ['sandbox'],
     selected_operator: 'sandbox',
     next_action: null,
-    metadata: { booking_id: bookingId, transaction_reference: transactionReference },
-    description: transactionReference,
+    ...getPaymentReferenceFields(bookingId),
     livemode: false,
     created: Math.floor(Date.now() / 1000),
     expires_at: Math.floor(Date.now() / 1000) + 600,
@@ -199,7 +219,7 @@ const createLocalSandboxPaymentIntent = ({ bookingId, wireAmount, allowedOperato
   return intent;
 };
 
-export const createPaymentIntent = ({ bookingId, wireAmount, allowedOperators }) => {
+export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperators }) => {
   if (isLocalWireSandbox()) {
     return createLocalSandboxPaymentIntent({ bookingId, wireAmount, allowedOperators });
   }
@@ -207,20 +227,35 @@ export const createPaymentIntent = ({ bookingId, wireAmount, allowedOperators })
   assertSafeWireMode(getApiKey());
   assertLiveOperators(allowedOperators);
 
-  const transactionReference = getPaymentReference(bookingId);
+  const referenceFields = getPaymentReferenceFields(bookingId);
   const payload = {
     amount: wireAmount,
     currency: 'MNT',
     automatic_operator: shouldUseAutomaticOperator(allowedOperators),
     allowed_operators: allowedOperators,
-    metadata: { booking_id: bookingId, transaction_reference: transactionReference },
-    description: transactionReference,
+    ...referenceFields,
   };
 
-  return wireRequest('/payment_intents', {
-    payload,
-    idempotencyKey: `wire-pi-${bookingId}-${wireAmount}`,
-  });
+  try {
+    return await wireRequest('/payment_intents', {
+      payload,
+      idempotencyKey: `wire-pi-${bookingId}-${wireAmount}`,
+    });
+  } catch (err) {
+    if (!isPayloadFieldError(err)) throw err;
+    console.warn('[Wire] Reference autofill fields were rejected on create; retrying with basic description/metadata.', err.message);
+    return wireRequest('/payment_intents', {
+      payload: {
+        amount: wireAmount,
+        currency: 'MNT',
+        automatic_operator: shouldUseAutomaticOperator(allowedOperators),
+        allowed_operators: allowedOperators,
+        description: referenceFields.description,
+        metadata: referenceFields.metadata,
+      },
+      idempotencyKey: `wire-pi-basic-${bookingId}-${wireAmount}`,
+    });
+  }
 };
 
 const isActionUrl = (value) => /^[a-z][a-z0-9+.-]*:\/\//i.test(value || '');
@@ -283,12 +318,26 @@ export const confirmPaymentIntent = ({ bookingId, paymentIntentId, allowedOperat
   }
 
   const operator = getSelectedOperator(allowedOperators);
-  return wireRequest(`/payment_intents/${paymentIntentId}/confirm`, {
-    payload: {
+  const referenceFields = getPaymentReferenceFields(bookingId);
+  const fullPayload = {
       return_url: returnUrl,
+      ...referenceFields,
       ...(operator ? { operator } : {}),
-    },
+  };
+
+  return wireRequest(`/payment_intents/${paymentIntentId}/confirm`, {
+    payload: fullPayload,
     idempotencyKey: `wire-confirm-${bookingId}-${paymentIntentId}`,
+  }).catch((err) => {
+    if (!isPayloadFieldError(err)) throw err;
+    console.warn('[Wire] Reference autofill fields were rejected on confirm; retrying with basic payload.', err.message);
+    return wireRequest(`/payment_intents/${paymentIntentId}/confirm`, {
+      payload: {
+        return_url: returnUrl,
+        ...(operator ? { operator } : {}),
+      },
+      idempotencyKey: `wire-confirm-basic-${bookingId}-${paymentIntentId}`,
+    });
   });
 };
 

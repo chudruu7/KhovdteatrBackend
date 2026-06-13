@@ -24,6 +24,8 @@ const formatTheaterDateTime = (value) => {
   };
 };
 
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export const sendPaidBookingEmail = async (booking) => {
   if (!booking) return { success: false, reason: 'missing_booking' };
   if (booking.ticketEmailSentAt) return { success: true, skipped: true, reason: 'already_sent' };
@@ -58,6 +60,22 @@ export const sendPaidBookingEmail = async (booking) => {
   return result;
 };
 
+const sendPaidBookingEmailWithRetry = async (booking, attempts = 3) => {
+  let lastResult = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    lastResult = await sendPaidBookingEmail(booking);
+    if (lastResult?.success) return lastResult;
+    console.warn('[Booking/Fulfillment] Ticket email failed, retrying...', {
+      bookingId: String(booking?._id || ''),
+      attempt,
+      attempts,
+      reason: lastResult?.reason || lastResult?.error || lastResult?.code || 'unknown',
+    });
+    if (attempt < attempts) await wait(1200);
+  }
+  return lastResult || { success: false, reason: 'email_failed' };
+};
+
 export const markBookingPaidAndNotify = async ({ bookingId, paymentMethod, transactionId }) => {
   const booking = await Booking.findById(bookingId)
     .populate('movie', 'title')
@@ -73,13 +91,8 @@ export const markBookingPaidAndNotify = async ({ bookingId, paymentMethod, trans
     throw err;
   }
 
-  const showTime = booking.schedule?.showTime ? new Date(booking.schedule.showTime) : null;
-  if (!showTime || showTime.getTime() <= Date.now()) {
-    booking.payment.status = 'failed';
-    booking.status = 'cancelled';
-    await booking.save();
-
-    const err = new Error('Энэ үзвэрийн цаг өнгөрсөн тул төлбөр баталгаажуулах боломжгүй.');
+  if (!booking.schedule?.showTime) {
+    const err = new Error('???????? ??? ????????? ??? ?????????? ????? ?????? ?????????.');
     err.statusCode = 400;
     throw err;
   }
@@ -90,6 +103,6 @@ export const markBookingPaidAndNotify = async ({ bookingId, paymentMethod, trans
   booking.status = 'active';
   await booking.save();
 
-  const emailResult = await sendPaidBookingEmail(booking);
+  const emailResult = await sendPaidBookingEmailWithRetry(booking);
   return { booking, emailResult };
 };
