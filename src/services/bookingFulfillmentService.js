@@ -26,6 +26,25 @@ const formatTheaterDateTime = (value) => {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const logBookingEmailContext = (label, booking, extra = {}) => {
+  console.log(`[Booking/Fulfillment] ${label}`, {
+    bookingId: String(booking?._id || ''),
+    customerEmail: booking?.customer?.email || null,
+    movieTitle: booking?.schedule?.movie?.title || booking?.movie?.title || null,
+    showTime: booking?.schedule?.showTime || null,
+    hall: booking?.schedule?.hall?.hallName || null,
+    seats: booking?.seats || [],
+    tickets: booking?.tickets || [],
+    totalPrice: booking?.totalPrice,
+    bookingStatus: booking?.status,
+    paymentStatus: booking?.payment?.status,
+    paymentMethod: booking?.payment?.method,
+    transactionId: booking?.payment?.transactionId,
+    ticketEmailSentAt: booking?.ticketEmailSentAt || null,
+    ...extra,
+  });
+};
+
 export const sendPaidBookingEmail = async (booking) => {
   if (!booking) return { success: false, reason: 'missing_booking' };
   if (booking.ticketEmailSentAt) return { success: true, skipped: true, reason: 'already_sent' };
@@ -37,6 +56,8 @@ export const sendPaidBookingEmail = async (booking) => {
   ]);
 
   if (!booking.schedule?.showTime) return { success: false, reason: 'missing_show_time' };
+
+  logBookingEmailContext('Sending paid ticket email', booking);
 
   const show = formatTheaterDateTime(booking.schedule.showTime);
   const result = await sendBookingConfirmation({
@@ -56,6 +77,8 @@ export const sendPaidBookingEmail = async (booking) => {
     booking.ticketEmailSentAt = new Date();
     await booking.save();
   }
+
+  logBookingEmailContext('Paid ticket email result', booking, { emailResult: result });
 
   return result;
 };
@@ -103,6 +126,9 @@ export const markBookingPaidAndNotify = async ({ bookingId, paymentMethod, trans
   booking.status = 'active';
   await booking.save();
 
+  logBookingEmailContext('Booking marked paid', booking);
+
   const emailResult = await sendPaidBookingEmailWithRetry(booking);
+  logBookingEmailContext('Booking paid notification finished', booking, { emailResult });
   return { booking, emailResult };
 };

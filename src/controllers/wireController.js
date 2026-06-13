@@ -175,6 +175,20 @@ const reusableWireStatuses = new Set([
   'requires_confirmation',
 ]);
 
+const isWirePaymentIntentId = (value) => /^pi_/i.test(String(value || ''));
+
+const confirmedWireStatuses = new Set([
+  'succeeded',
+  'requires_action',
+  'processing',
+  'pending',
+]);
+
+const isDuplicateWireTransactionError = (err) => (
+  /duplicate|давхар|double|already|exists|гүйлгээ/i.test(String(err?.message || '')) ||
+  /duplicate|давхар|double|already|exists|гүйлгээ/i.test(JSON.stringify(err?.details || {}))
+);
+
 const buildWireCheckoutData = ({
   paymentIntentId,
   intent,
@@ -200,6 +214,57 @@ const buildWireCheckoutData = ({
   transactionReference,
 });
 
+const getWireCheckoutUrlForIntent = ({ intent, paymentIntentId, bookingId }) => (
+  extractActionUrl(intent?.next_action) ||
+  (intent?.status === 'succeeded' ? `${getFrontendUrl()}/ticket-verify/${bookingId}` : null) ||
+  getWireActionPageUrl(paymentIntentId)
+);
+
+const storeActionPageIfNeeded = ({ intent, paymentIntentId, bookingId, amount }) => {
+  const checkoutUrl = extractActionUrl(intent?.next_action);
+  if (!checkoutUrl && intent?.status !== 'succeeded') {
+    storeWireActionPage({
+      paymentIntentId,
+      bookingId: String(bookingId),
+      amount,
+      nextAction: intent?.next_action || intent,
+    });
+  }
+};
+
+const confirmPaymentIntentSafely = async ({
+  bookingId,
+  paymentIntentId,
+  allowedOperators,
+  returnUrl,
+  wireAmount,
+}) => {
+  const existingIntent = isLocalWireSandbox()
+    ? null
+    : await retrievePaymentIntent(paymentIntentId, { wireAmount }).catch(() => null);
+  if (confirmedWireStatuses.has(String(existingIntent?.status || '').toLowerCase())) {
+    return existingIntent;
+  }
+
+  try {
+    return await confirmPaymentIntent({
+      bookingId: String(bookingId),
+      paymentIntentId,
+      allowedOperators,
+      returnUrl,
+    });
+  } catch (err) {
+    if (!isDuplicateWireTransactionError(err)) throw err;
+    const intent = await retrievePaymentIntent(paymentIntentId, { wireAmount });
+    console.warn('[Wire] Confirm returned duplicate transaction warning; reusing existing intent.', {
+      bookingId: String(bookingId),
+      paymentIntentId,
+      status: intent?.status,
+    });
+    return intent;
+  }
+};
+
 export const createWireCheckout = async (req, res) => {
   try {
     const { bookingId, successUrl } = req.body || {};
@@ -219,7 +284,11 @@ export const createWireCheckout = async (req, res) => {
     if (!wireAmount) return res.status(400).json({ success: false, message: 'Төлбөрийн дүн олдсонгүй.' });
 
     const allowedOperators = getDefaultAllowedOperators();
-    const existingPaymentIntentId = booking.payment?.method === 'wire' && booking.payment?.transactionId;
+    const existingPaymentIntentId = (
+      booking.payment?.method === 'wire' &&
+      isWirePaymentIntentId(booking.payment?.transactionId) &&
+      booking.payment.transactionId
+    );
 
     if (existingPaymentIntentId && booking.payment?.status === 'pending') {
       try {
@@ -280,7 +349,9 @@ export const createWireCheckout = async (req, res) => {
           });
         }
       } catch (err) {
-        console.warn('[Wire] Existing payment intent lookup failed, creating a new checkout:', err.message);
+        console.warn('[Wire] Existing payment intent lookup failed; refusing to create a duplicate checkout:', err.message);
+        err.statusCode = err.statusCode || 502;
+        throw err;
       }
     }
 
@@ -291,23 +362,24 @@ export const createWireCheckout = async (req, res) => {
     });
 
     const returnUrl = getWireReturnUrl(booking._id, successUrl);
-    const confirmedIntent = await confirmPaymentIntent({
-      bookingId: String(booking._id),
+    const confirmedIntent = await confirmPaymentIntentSafely({
+      bookingId: booking._id,
       paymentIntentId: paymentIntent.id,
       allowedOperators,
       returnUrl,
+      wireAmount,
     });
-    const checkoutUrl = extractActionUrl(confirmedIntent.next_action) || (confirmedIntent.status === 'succeeded' ? returnUrl : null);
-
-    if (!checkoutUrl && confirmedIntent.status !== 'succeeded') {
-      storeWireActionPage({
-        paymentIntentId: paymentIntent.id,
-        bookingId: String(booking._id),
-        amount: wireAmount,
-        nextAction: confirmedIntent.next_action || confirmedIntent,
-      });
-    }
-    const finalCheckoutUrl = checkoutUrl || getWireActionPageUrl(paymentIntent.id);
+    storeActionPageIfNeeded({
+      intent: confirmedIntent,
+      paymentIntentId: paymentIntent.id,
+      bookingId: booking._id,
+      amount: wireAmount,
+    });
+    const finalCheckoutUrl = getWireCheckoutUrlForIntent({
+      intent: confirmedIntent,
+      paymentIntentId: paymentIntent.id,
+      bookingId: booking._id,
+    });
 
     booking.payment.method = 'wire';
     booking.payment.status = confirmedIntent.status === 'succeeded' ? 'paid' : 'pending';
