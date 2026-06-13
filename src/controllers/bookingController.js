@@ -1,7 +1,10 @@
 ﻿// src/controllers/bookingController.js
 import Booking  from '../models/Booking.js';
 import Schedule from '../models/Schedule.js';
-import { sendPaidBookingEmail } from '../services/bookingFulfillmentService.js';
+import {
+  markBookingPaidAndNotify,
+  sendPaidBookingEmail,
+} from '../services/bookingFulfillmentService.js';
 
 const THEATER_TIME_ZONE = 'Asia/Hovd';
 
@@ -271,7 +274,13 @@ export const createBooking = async (req, res) => {
 // @route POST /api/bookings/:id/confirm
 export const confirmBooking = async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id).populate('schedule');
+    const booking = await Booking.findById(req.params.id)
+      .populate('movie', 'title posterUrl')
+      .populate({
+        path: 'schedule',
+        select: 'showTime hall movie',
+        populate: { path: 'movie', select: 'title posterUrl' },
+      });
     if (!booking) return res.status(404).json({ message: 'Захиалга олдсонгүй' });
 
     if (!booking.schedule?.showTime || new Date(booking.schedule.showTime).getTime() <= Date.now()) {
@@ -291,14 +300,13 @@ export const confirmBooking = async (req, res) => {
       });
     }
 
-    booking.payment.status  = 'paid';
-    booking.payment.method  = booking.payment.method || 'wire';
-    booking.status          = 'active';
-    await booking.save();
+    const fulfilled = await markBookingPaidAndNotify({
+      bookingId: booking._id,
+      paymentMethod: req.body?.paymentMethod || booking.payment?.method || 'wire',
+      transactionId: req.body?.transactionId || booking.payment?.transactionId,
+    });
 
-    const emailResult = await sendPaidBookingEmail(booking);
-
-    return res.json({ success: true, booking, email: emailResult });
+    return res.json({ success: true, booking: fulfilled.booking, email: fulfilled.emailResult });
   } catch (err) {
     return res.status(500).json({ message: 'Алдаа гарлаа', error: err.message });
   }
