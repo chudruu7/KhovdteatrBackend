@@ -1,5 +1,3 @@
-import fetch from 'node-fetch'; // Шаардлагатай бол (Node.js хувилбараас хамаарч)
-
 const WIRE_BASE_URL = process.env.WIRE_API_BASE_URL || 'https://api.wire.mn/v1';
 const WIRE_API_TIMEOUT_MS = Number(process.env.WIRE_API_TIMEOUT_MS || 10000);
 const sandboxIntents = new Map();
@@ -118,34 +116,10 @@ const wireRequest = async (path, { method = 'POST', payload, idempotencyKey, que
   return data;
 };
 
-/**
- * ЗАСВАР: Төлбөрийн нэгдсэн Deeplink-ийг алдаагүй, цэвэрхэн шүүж авах функц.
- * Энэ нь Хаан банк, Токи, Төрийн банкийг autofill-тэй нь шууд нээнэ.
- */
-export const extractActionUrl = (intent) => {
-  if (!intent) return null;
-  
-  // 1. Wire-аас ирсэн ухаалаг нэгдсэн Deeplink (Бүх банкны апп-ыг гүйлгээний утгатай нь нээнэ)
-  if (intent.next_action?.deeplink) {
-    return intent.next_action.deeplink;
-  }
-  
-  // 2. Хэрэв Hosted Checkout-ын вэб хуудасны линк байвал түүнийг авна
-  if (intent.next_action?.url) {
-    return intent.next_action.url;
-  }
-  
-  return null;
-};
-
-/**
- * ЗАСВАР: .env дээрх ["qpay", "socialpay"] гэсэн бичиглэлийг 
- * найдвартай цэвэрлэж, цэвэр массив болгон хөрвүүлнэ.
- */
+// ХУУЧИН К ОД - СТРИНГ ЦЭВЭРЛЭХ СҮҮЛИЙН ХАМГААЛАЛТТАЙ
 export const getDefaultAllowedOperators = () => {
   let rawEnv = process.env.WIRE_ALLOWED_OPERATORS || '';
-  
-  // Хаалт, хашилтуудыг устгаж цэвэрлэнэ
+  // Массив хэлбэрээр бичсэн хаалт, хашилтуудыг устгах найдвартай хамгаалалт
   rawEnv = rawEnv.replace(/[\[\]\s"']/g, ''); 
 
   const configured = rawEnv
@@ -155,7 +129,7 @@ export const getDefaultAllowedOperators = () => {
 
   if (configured.length) return configured;
   if (isWireTestMode() || getApiKey()?.startsWith('sk_test_')) return ['sandbox'];
-  return [];
+  return []; // Хэрэв юу ч байхгүй бол Wire-ийн automatic_operator ажиллана
 };
 
 const assertLiveOperators = (allowedOperators = []) => {
@@ -224,18 +198,12 @@ const referenceQueryKeys = [
   'remark', 'message', 'reference', 'ref', 'payment_reference', 'paymentReference', 
   'payment_description', 'paymentDescription', 'transaction_reference', 
   'transactionReference', 'transaction_description', 'transactionDescription', 
-  'statement_descriptor', 'value', 'utga'
+  'statement_descriptor', 'value', 'utga',
 ];
 
 const isMissingReferenceValue = (value) => (
   value === null || value === undefined || value === '' ||
   /^null$/i.test(String(value)) || /^undefined$/i.test(String(value))
-);
-
-const isActionUrl = (value) => /^[a-z][a-z0-9+.-]*:\/\//i.test(value || '');
-const isAssetUrl = (value) => (
-  /\.(avif|bmp|gif|ico|jpeg|jpg|png|svg|webp)(\?|#|$)/i.test(value || '') ||
-  /\/(launcher-icon|logo|icon|image|thumbnail|avatar)[^/]*$/i.test(value || '')
 );
 
 const withReferenceQueryParams = (url, transactionReference) => {
@@ -357,7 +325,7 @@ export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperat
 
   assertSafeWireMode(getApiKey());
   
-  // ЭНЭ ХЭСГИЙГ ЗАСАВ: Хэрэв хоосон ирвэл .env-ийн бэлэн массивыг онооно
+  // АЮУЛГҮЙ БАЙДЛЫН НЭМЭЛТ: Хэрэв массив ирэхгүй эсвэл хоосон бол .env-ээс баталгаатай уншина
   const finalOperators = allowedOperators && allowedOperators.length 
     ? allowedOperators 
     : getDefaultAllowedOperators();
@@ -369,7 +337,7 @@ export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperat
     amount: wireAmount,
     currency: 'MNT',
     automatic_operator: shouldUseAutomaticOperator(finalOperators),
-    allowed_operators: finalOperators, // Баталгаатай зөв массив очно
+    allowed_operators: finalOperators.length ? finalOperators : undefined,
     ...referenceFields,
   };
 
@@ -386,7 +354,7 @@ export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperat
         amount: wireAmount,
         currency: 'MNT',
         automatic_operator: shouldUseAutomaticOperator(finalOperators),
-        allowed_operators: finalOperators,
+        allowed_operators: finalOperators.length ? finalOperators : undefined,
         description: referenceFields.description,
         metadata: referenceFields.metadata,
       },
@@ -394,6 +362,56 @@ export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperat
     });
   }
 };
+
+const isActionUrl = (value) => /^[a-z][a-z0-9+.-]*:\/\//i.test(value || '');
+const isAssetUrl = (value) => (
+  /\.(avif|bmp|gif|ico|jpeg|jpg|png|svg|webp)(\?|#|$)/i.test(value || '') ||
+  /\/(launcher-icon|logo|icon|image|thumbnail|avatar)[^/]*$/i.test(value || '')
+);
+
+// ТАНЫ АНХНЫ ХУУЧИН ОНООНЫ СИСТЕМ ТӨГС ХЭВЭЭРЭЭ ҮЛДЭВ (ОНООГ ХАСАХГҮЙ БОЛГОЖ ЗАСАВ)
+const scoreActionUrl = (url, keyPath) => {
+  const path = keyPath.join('.').toLowerCase();
+  if (!isActionUrl(url) || isAssetUrl(url)) return -1;
+  if (/(logo|icon|image|thumbnail|avatar|qr_image)/i.test(path)) return -1;
+
+  let score = 1;
+  if (/^https?:\/\//i.test(url)) score += 500; 
+  if (/(checkout_url|payment_url|redirect_url|web_url|payment_link)$/.test(path)) score += 200;
+  if (/(checkout|payment|redirect|web)/.test(path)) score += 80;
+  if (/(link)$/.test(path)) score += 40;
+  if (/deeplink/.test(path)) score += 1000; // Өөрчлөлт: Хасах биш нэмэх болгосон
+  if (/^(qpay|khanbank|tdbm|xacbank|golomt|statebank|mbank|most):\/\//i.test(url)) score += 2000; // Нэмэх болгосон
+  if (/s3\.qpay\.mn\/p\//i.test(url)) score += 1500;
+  return score;
+};
+
+const collectActionUrls = (value, keyPath = [], candidates = []) => {
+  if (!value) return candidates;
+
+  if (typeof value === 'string') {
+    const score = scoreActionUrl(value, keyPath);
+    if (score >= 0) candidates.push({ url: value, score });
+    return candidates;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectActionUrls(item, [...keyPath, String(index)], candidates));
+    return candidates;
+  }
+
+  if (typeof value === 'object') {
+    Object.entries(value).forEach(([key, item]) => collectActionUrls(item, [...keyPath, key], candidates));
+  }
+
+  return candidates;
+};
+
+// ТАНЫ АНХНЫ ОНООНЫ ШҮҮЛТҮҮРТЭЙ ФУНКЦ
+export const extractActionUrl = (value) => (
+  collectActionUrls(value)
+    .sort((left, right) => right.score - left.score)[0]?.url || null
+);
 
 export const confirmPaymentIntent = ({ bookingId, paymentIntentId, allowedOperators, returnUrl }) => {
   if (isLocalWireSandbox()) {
