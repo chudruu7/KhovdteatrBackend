@@ -366,14 +366,71 @@ const isAssetUrl = (value) => (
   /\/(launcher-icon|logo|icon|image|thumbnail|avatar)[^/]*$/i.test(value || '')
 );
 
-/**
- * ШИНЭЧЛЭГДСЭН: Төлбөрийн албан ёсны Hosted Checkout (Вэб хуудасны ухаалаг линк)-ийг 
- * шууд авч буцаадаг болгов. Онооны хуучин систем, шүүлтүүрүүдийг цэвэрлэв.
- */
+// ЗАСВАРЛАГДСАН ХЭСЭГ: wireController.js-д шаардлагатай confirmPaymentIntent-ийг export хийв
+export const confirmPaymentIntent = async ({ bookingId, paymentIntentId, allowedOperators, returnUrl }) => {
+  if (isLocalWireSandbox()) {
+    return {
+      id: paymentIntentId,
+      object: 'payment_intent',
+      status: 'requires_action',
+      next_action: { url: getSandboxCheckoutUrl(paymentIntentId) },
+      livemode: false,
+    };
+  }
+
+  const operator = getSelectedOperator(allowedOperators);
+  const referenceFields = getPaymentReferenceFields(bookingId);
+  const fullPayload = {
+      return_url: returnUrl,
+      ...referenceFields,
+      ...(operator ? { operator } : {}),
+  };
+
+  return wireRequest(`/payment_intents/${paymentIntentId}/confirm`, {
+    payload: fullPayload,
+    idempotencyKey: `wire-confirm-${bookingId}-${paymentIntentId}`,
+  });
+};
+
+export const retrievePaymentIntent = async (paymentIntentId, fallback = {}) => {
+  const apiKey = getApiKey();
+  if (isLocalWireSandbox()) {
+    let intent = sandboxIntents.get(paymentIntentId);
+    if (!intent && String(paymentIntentId).startsWith('pi_test_')) {
+      const bookingId = String(paymentIntentId).replace(/^pi_test_/, '');
+      intent = createLocalSandboxPaymentIntent({
+        bookingId,
+        wireAmount: fallback.wireAmount || 0,
+        allowedOperators: ['sandbox'],
+      });
+    }
+    if (!intent) {
+      const err = new Error('Sandbox PaymentIntent was not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    return {
+      ...intent,
+      status: 'succeeded',
+      next_action: { sandbox: 'auto_succeeded' },
+    };
+  }
+
+  if (!apiKey) {
+    const err = new Error('WIRE_API_KEY is not configured.');
+    err.statusCode = 500;
+    throw err;
+  }
+  assertSafeWireMode(apiKey);
+
+  return wireRequest(`/payment_intents/${paymentIntentId}`, { method: 'GET' });
+};
+
+// ЗАСВАРЛАГДСАН ХЭСЭГ: Албан ёсны Hosted Checkout ухаалаг линкийг буцаана
 export const extractActionUrl = (intent) => {
   if (!intent) return null;
   
-  // Wire-аас ирдэг албан ёсны Hosted Checkout ухаалаг вэб линк
   if (intent.next_action?.url) {
     return intent.next_action.url;
   }
