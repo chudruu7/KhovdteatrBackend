@@ -202,7 +202,11 @@ const buildWireCheckoutData = ({
 }) => ({
   paymentIntentId,
   paymentIntentStatus: intent?.status || 'pending',
-  checkoutUrl,
+  checkoutUrl, // Энэ хэвээрээ байна (https://...)
+  
+  // НЭМЭЛТ: Wire-аас ирсэн банкуудын шууд апп нээх Deeplink-үүдийг урагш шиднэ
+  appLinks: intent?.next_action?.urls || [], 
+  
   nextAction: enrichPaymentActionReferences(intent?.next_action || null, transactionReference),
   amount,
   allowedOperators,
@@ -284,12 +288,13 @@ export const createWireCheckout = async (req, res) => {
     const wireAmount = toWireMntAmount(booking.totalPrice);
     const transactionReference = getPaymentReference(booking._id);
     if (!wireAmount) return res.status(400).json({ success: false, message: 'Төлбөрийн дүн олдсонгүй.' });
-
+console.log("=== МАНАЙ СҮЛЖЭЭНД ҮҮССЭН CHECKOUT URL ===", finalCheckoutUrl);
     const allowedOperators = getDefaultAllowedOperators();
     const existingPaymentIntentId = (
       booking.payment?.method === 'wire' &&
       isWirePaymentIntentId(booking.payment?.transactionId) &&
       booking.payment.transactionId
+      
     );
 
     if (existingPaymentIntentId && booking.payment?.status === 'pending') {
