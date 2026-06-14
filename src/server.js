@@ -36,6 +36,8 @@ connectDB();
 const app = express();
 const defaultAllowedOrigins = [
   'https://khovdteatr-web-pied.vercel.app',
+  'https://www.hovdteatr.com',
+  'https://hovdteatr.com',
   'http://localhost:3000',
   'http://localhost:8081',
   'http://localhost:5173',
