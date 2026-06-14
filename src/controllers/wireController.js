@@ -199,25 +199,31 @@ const buildWireCheckoutData = ({
   emailResult = null,
   reused = false,
   transactionReference,
-}) => ({
-  paymentIntentId,
-  paymentIntentStatus: intent?.status || 'pending',
-  checkoutUrl, // Энэ хэвээрээ байна (https://...)
-  
-  // НЭМЭЛТ: Wire-аас ирсэн банкуудын шууд апп нээх Deeplink-үүдийг урагш шиднэ
-  appLinks: intent?.next_action?.urls || [], 
-  
-  nextAction: enrichPaymentActionReferences(intent?.next_action || null, transactionReference),
-  amount,
-  allowedOperators,
-  selectedOperator: intent?.selected_operator,
-  livemode: intent?.livemode,
-  localSandbox: isLocalWireSandbox(),
-  testMode: isWireTestMode(),
-  email: emailResult,
-  reused,
-  transactionReference,
-});
+}) => {
+  // Wire-аас ирсэн оригинал нэхэмжлэхийг шүүж авах
+  const rawNextAction = intent?.next_action || null;
+  const enrichedNextAction = enrichPaymentActionReferences(rawNextAction, transactionReference);
+
+  return {
+    paymentIntentId,
+    paymentIntentStatus: intent?.status || 'pending',
+    checkoutUrl,
+    
+    // ЭНЭ ХЭСГИЙГ ЗАСАВ: Expo (React Native) нээхэд зориулсан банкуудын Deep Link жагсаалт
+    appLinks: rawNextAction?.urls || intent?.urls || [], 
+    
+    nextAction: enrichedNextAction,
+    amount,
+    allowedOperators,
+    selectedOperator: intent?.selected_operator,
+    livemode: intent?.livemode,
+    localSandbox: isLocalWireSandbox(),
+    testMode: isWireTestMode(),
+    email: emailResult,
+    reused,
+    transactionReference,
+  };
+};
 
 const getWireCheckoutUrlForIntent = ({ intent, paymentIntentId, bookingId }) => (
   extractActionUrl(enrichPaymentActionReferences(intent?.next_action, bookingId)) ||

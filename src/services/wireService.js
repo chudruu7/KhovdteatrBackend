@@ -356,14 +356,20 @@ export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperat
   }
 
   assertSafeWireMode(getApiKey());
-  assertLiveOperators(allowedOperators);
+  
+  // ЭНЭ ХЭСГИЙГ ЗАСАВ: Хэрэв хоосон ирвэл .env-ийн бэлэн массивыг онооно
+  const finalOperators = allowedOperators && allowedOperators.length 
+    ? allowedOperators 
+    : getDefaultAllowedOperators();
+
+  assertLiveOperators(finalOperators);
 
   const referenceFields = getPaymentReferenceFields(bookingId);
   const payload = {
     amount: wireAmount,
     currency: 'MNT',
-    automatic_operator: shouldUseAutomaticOperator(allowedOperators),
-    allowed_operators: allowedOperators,
+    automatic_operator: shouldUseAutomaticOperator(finalOperators),
+    allowed_operators: finalOperators, // Баталгаатай зөв массив очно
     ...referenceFields,
   };
 
@@ -379,8 +385,8 @@ export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperat
       payload: {
         amount: wireAmount,
         currency: 'MNT',
-        automatic_operator: shouldUseAutomaticOperator(allowedOperators),
-        allowed_operators: allowedOperators,
+        automatic_operator: shouldUseAutomaticOperator(finalOperators),
+        allowed_operators: finalOperators,
         description: referenceFields.description,
         metadata: referenceFields.metadata,
       },
