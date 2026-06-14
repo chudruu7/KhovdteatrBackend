@@ -7,7 +7,7 @@ import {
   sendPaidBookingEmail,
 } from '../services/bookingFulfillmentService.js';
 
-const THEATER_TIME_ZONE = 'Asia/Ulaanbaatar';
+const THEATER_TIME_ZONE = 'Asia/Hovd';
 
 const formatTheaterDateTime = (value) => {
   if (!value) return { dateISO: '', date: '', time: '' };
@@ -144,7 +144,7 @@ async function resolveScheduleId(scheduleId, movieId, date, time) {
   if (time) {
     const found = allSchedules.find(s => {
       const localTime = new Date(s.showTime).toLocaleTimeString('mn-MN', {
-        hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Ulaanbaatar',
+        hour: '2-digit', minute: '2-digit', hour12: false, timeZone: THEATER_TIME_ZONE,
       });
       return localTime === time;
     });
@@ -455,6 +455,11 @@ export const cancelBooking = async (req, res) => {
       });
     }
 
+    if (booking.payment?.status !== 'paid') {
+      await Booking.findByIdAndDelete(booking._id);
+      return res.json({ success: true, deleted: true, message: 'Төлөгдөөгүй захиалга устгагдлаа.' });
+    }
+
     booking.status = 'cancelled';
     await booking.save();
 
@@ -477,13 +482,11 @@ export const cancelExpiredBookings = async () => {
           $pull: { soldSeats: { $in: booking.seats } }
         });
       }
-      booking.status = 'cancelled';
-      booking.payment.status = 'cancelled';
-      await booking.save();
+      await Booking.findByIdAndDelete(booking._id);
     }
 
     if (expiredBookings.length > 0) {
-      console.log(`✅ ${expiredBookings.length} хугацаа дууссан booking цуцлагдлаа`);
+      console.log(`✅ ${expiredBookings.length} төлөгдөөгүй booking устгагдлаа`);
     }
   } catch (err) {
     console.error('Expired booking цуцлах алдаа:', err);
@@ -495,7 +498,10 @@ export const getMyHistory = async (req, res) => {
     const userId = req.user?._id;
     if (!userId) return res.status(401).json({ message: 'Нэвтрээгүй байна' });
 
-    const bookings = await Booking.find({ userId })
+    const bookings = await Booking.find({
+      userId,
+      'hiddenForUsers.user': { $ne: userId },
+    })
       .populate('movie', 'title posterUrl')
       .populate({
         path: 'schedule',
@@ -510,6 +516,30 @@ export const getMyHistory = async (req, res) => {
     res.json({ success: true, bookings: formatted });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+export const hideBookingForMe = async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) return res.status(401).json({ message: 'Нэвтрээгүй байна' });
+
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ success: false, message: 'Захиалга олдсонгүй.' });
+
+    const isOwner = booking.userId && String(booking.userId) === String(userId);
+    if (!isOwner) {
+      return res.status(403).json({ success: false, message: 'Энэ захиалгыг устгах эрхгүй байна.' });
+    }
+
+    if (!booking.hiddenForUsers?.some((entry) => String(entry.user) === String(userId))) {
+      booking.hiddenForUsers.push({ user: userId, hiddenAt: new Date() });
+      await booking.save();
+    }
+
+    return res.json({ success: true, message: 'Захиалга таны жагсаалтаас устгагдлаа.' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Захиалга устгахад алдаа гарлаа.', error: err.message });
   }
 };
 

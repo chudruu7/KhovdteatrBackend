@@ -59,6 +59,10 @@ const bookingSchema = new mongoose.Schema({
     type: Date,
     default: null,
   },
+  hiddenForUsers: [{
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    hiddenAt: { type: Date, default: Date.now },
+  }],
   expiredAt: {
     type: Date,
     default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),

@@ -9,6 +9,7 @@ import {
   verifyBookingStatus,
   cancelBooking,
   confirmBooking,
+  hideBookingForMe,
   resendBookingConfirmation
 } from '../controllers/bookingController.js';
 import { sendBookingConfirmation } from '../services/Emailservice.js';
@@ -25,6 +26,7 @@ router.post  ('/',               protect, createBooking);
 router.post  ('/:id/confirm',    protect, confirmBooking);
 router.post  ('/:id/resend-confirmation', protect, resendBookingConfirmation);
 router.post  ('/:id/cancel',     protect, cancelBooking);
+router.delete('/:id/my-history',  protect, hideBookingForMe);
 // ✅ Dynamic route-ууд ХАМГИЙН СҮҮЛД
 router.get   ('/:bookingId',     protect, getBookingDetails);
 

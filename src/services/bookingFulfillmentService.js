@@ -1,7 +1,7 @@
 import Booking from '../models/Booking.js';
 import { sendBookingConfirmation } from './Emailservice.js';
 
-const THEATER_TIME_ZONE = 'Asia/Ulaanbaatar';
+const THEATER_TIME_ZONE = 'Asia/Hovd';
 
 const formatTheaterDateTime = (value) => {
   const date = new Date(value);

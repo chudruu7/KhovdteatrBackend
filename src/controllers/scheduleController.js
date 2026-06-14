@@ -3,8 +3,8 @@
 import Schedule from '../models/Schedule.js';
 import Movie    from '../models/Movie.js';
 
-// Mongolia = UTC+8, DST байхгүй
-const MONGOLIA_MS = 8 * 60 * 60 * 1000;
+// Theater system time = Khovd, UTC+7, no DST.
+const THEATER_OFFSET_MS = 7 * 60 * 60 * 1000;
 
 const parseTicketPrice = (value, fallback) => {
   if (value === undefined || value === null || value === '') return fallback;
@@ -20,9 +20,9 @@ const mongoliaDateToUTCRange = (dateStr) => {
   // Аргумент нь "2026-03-17" format
   const [y, m, d] = dateStr.split('-').map(Number);
   // Mongolia өдрийн эхлэл: local 00:00 = UTC-8h = өмнөх өдрийн 16:00 UTC
-  const start = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0) - MONGOLIA_MS);
+  const start = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0) - THEATER_OFFSET_MS);
   // Mongolia өдрийн төгсгөл: local 23:59:59 = UTC-8h
-  const end   = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999) - MONGOLIA_MS);
+  const end   = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999) - THEATER_OFFSET_MS);
   return { start, end };
 };
 
