@@ -219,41 +219,24 @@ const buildWireCheckoutData = ({
   };
 };
 
-// ЗАСВАР ОРУУЛСАН ХЭСЭГ: Банкуудын Deep Link-ийг шүүж, Mobile Autofill-ийг шууд ажиллуулна
+// ШИНЭЧЛЭГДСЭН: Ухаалаг Hosted Checkout-ын линкийг Frontend рүү шууд дамжуулна
 const getWireCheckoutUrlForIntent = ({ intent, paymentIntentId, bookingId }) => {
   if (intent?.status === 'succeeded') {
     return `${getFrontendUrl()}/ticket-verify/${bookingId}`;
   }
 
-  // Wire-аас ирсэн банкуудын шууд апп дууддаг Deep Link жагсаалтыг шалгана
-  const appLinks = intent?.next_action?.urls || intent?.urls || [];
-  
-  if (appLinks.length > 0) {
-    // 1. Хаан банкны шууд апп протоколыг шүүж олох (khanbank://...)
-    const khanBank = appLinks.find(link => link.name === 'Khan Bank' || link.url.startsWith('khanbank://'));
-    if (khanBank && khanBank.url) {
-      // Хэрэв Хаан банкны оригинал Deep Link байвал түүнийг шууд буцаана!
-      // Энэ линк нь Хаан банкны апп-ыг нээж, утгыг нь 100% автоматаар бөглөж цоожилно.
-      return enrichPaymentActionReferences(khanBank.url, bookingId);
-    }
-
-    // 2. Хэрэв Хаан банк байхгүй, Токи байвал Токи-ийн линкийг авна
-    const tokiLink = appLinks.find(link => link.name === 'Toki' || link.url.startsWith('toki://'));
-    if (tokiLink && tokiLink.url) {
-      return enrichPaymentActionReferences(tokiLink.url, bookingId);
-    }
+  // Шүүлтүүргүйгээр шууд Wire-ийн бэлэн Hosted вэб линкийг авна
+  const officialUrl = extractActionUrl(intent);
+  if (officialUrl) {
+    return enrichPaymentActionReferences(officialUrl, bookingId);
   }
 
-  // 3. Хэрэв дээрх шууд апп линкүүд олдохгүй бол таны анхны хуучин онооны системээр вэб линкийг сонгоно
-  return (
-    extractActionUrl(enrichPaymentActionReferences(intent?.next_action, bookingId)) ||
-    getWireActionPageUrl(paymentIntentId)
-  );
+  return getWireActionPageUrl(paymentIntentId);
 };
 
 const storeActionPageIfNeeded = ({ intent, paymentIntentId, bookingId, amount }) => {
   const nextAction = enrichPaymentActionReferences(intent?.next_action || intent, bookingId);
-  const checkoutUrl = extractActionUrl(nextAction);
+  const checkoutUrl = extractActionUrl(intent);
   if (!checkoutUrl && intent?.status !== 'succeeded') {
     storeWireActionPage({
       paymentIntentId,
@@ -358,26 +341,18 @@ export const createWireCheckout = async (req, res) => {
         }
 
         if (existingAmountMatches && reusableWireStatuses.has(String(existingIntent.status || '').toLowerCase())) {
-          const existingNextAction = enrichPaymentActionReferences(
-            existingIntent.next_action || existingIntent,
-            booking._id,
-          );
-          const checkoutUrl = extractActionUrl(existingNextAction);
-          if (!checkoutUrl) {
-            storeWireActionPage({
-              paymentIntentId: existingPaymentIntentId,
-              bookingId: String(booking._id),
-              amount: wireAmount,
-              nextAction: existingNextAction,
-            });
-          }
+          const checkoutUrl = getWireCheckoutUrlForIntent({
+            intent: existingIntent,
+            paymentIntentId: existingPaymentIntentId,
+            bookingId: booking._id,
+          });
 
           return res.json({
             success: true,
             data: buildWireCheckoutData({
               paymentIntentId: existingPaymentIntentId,
               intent: existingIntent,
-              checkoutUrl: checkoutUrl || getWireActionPageUrl(existingPaymentIntentId),
+              checkoutUrl: checkoutUrl,
               amount: wireAmount,
               allowedOperators,
               reused: true,
@@ -414,6 +389,7 @@ export const createWireCheckout = async (req, res) => {
       amount: wireAmount,
     });
 
+    // ЗАСВАР: finalCheckoutUrl-ийг үүсгэх дараалал зөв болсон
     const finalCheckoutUrl = getWireCheckoutUrlForIntent({
       intent: confirmedIntent,
       paymentIntentId: paymentIntent.id,
@@ -490,7 +466,7 @@ export const renderWireSandboxCheckout = async (req, res) => {
     <main>
       <span class="badge">livemode: false</span>
       <h1>Wire sandbox төлбөр амжилттай</h1>
-      <p>Энэ checkout нь зөвхөн local test урсгал. Бодит банк, оператор, мөнгөний хөдөлгөөн ашиглаагүй.</p>
+      <p>Энэ checkout нь зөвхөн local test урсгал. Бодит банк, operator, мөнгөний хөдөлгөөн ашиглаагүй.</p>
       <code>${req.params.paymentIntentId || ''}</code>
     </main>
   </body>
@@ -549,7 +525,7 @@ export const renderWireActionCheckout = async (req, res) => {
   <body>
     <main>
       <div class="brand"><span class="badge">W</span><span>Wire checkout</span></div>
-      <h1>Төлбөрөө үргэлжлүүнэ үү</h1>
+      <h1>Төлбөрөө үргэлжлүүлнэ үү</h1>
       <div class="amount">${escapeHtml(amountText)} ₮</div>
       <p class="hint">QR-г банкны апп-аараа уншуулж төлнө үү. Төлбөр ормогц энэ хуудас өөрөө шалгаад тасалбар руу шилжинэ.</p>
       <div class="qr-wrap">${qrImages}</div>

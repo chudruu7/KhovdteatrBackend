@@ -116,10 +116,8 @@ const wireRequest = async (path, { method = 'POST', payload, idempotencyKey, que
   return data;
 };
 
-// ХУУЧИН К ОД - СТРИНГ ЦЭВЭРЛЭХ СҮҮЛИЙН ХАМГААЛАЛТТАЙ
 export const getDefaultAllowedOperators = () => {
   let rawEnv = process.env.WIRE_ALLOWED_OPERATORS || '';
-  // Массив хэлбэрээр бичсэн хаалт, хашилтуудыг устгах найдвартай хамгаалалт
   rawEnv = rawEnv.replace(/[\[\]\s"']/g, ''); 
 
   const configured = rawEnv
@@ -129,7 +127,7 @@ export const getDefaultAllowedOperators = () => {
 
   if (configured.length) return configured;
   if (isWireTestMode() || getApiKey()?.startsWith('sk_test_')) return ['sandbox'];
-  return []; // Хэрэв юу ч байхгүй бол Wire-ийн automatic_operator ажиллана
+  return [];
 };
 
 const assertLiveOperators = (allowedOperators = []) => {
@@ -194,10 +192,10 @@ const getPaymentReferenceFields = (bookingId) => {
 };
 
 const referenceQueryKeys = [
-  'description', 'desc', 'note', 'memo', 'purpose', 'comment', 'remarks', 
-  'remark', 'message', 'reference', 'ref', 'payment_reference', 'paymentReference', 
-  'payment_description', 'paymentDescription', 'transaction_reference', 
-  'transactionReference', 'transaction_description', 'transactionDescription', 
+  'description', 'desc', 'note', 'memo', 'purpose', 'comment', 'remarks',
+  'remark', 'message', 'reference', 'ref', 'payment_reference', 'paymentReference',
+  'payment_description', 'paymentDescription', 'transaction_reference',
+  'transactionReference', 'transaction_description', 'transactionDescription',
   'statement_descriptor', 'value', 'utga',
 ];
 
@@ -325,7 +323,6 @@ export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperat
 
   assertSafeWireMode(getApiKey());
   
-  // АЮУЛГҮЙ БАЙДЛЫН НЭМЭЛТ: Хэрэв массив ирэхгүй эсвэл хоосон бол .env-ээс баталгаатай уншина
   const finalOperators = allowedOperators && allowedOperators.length 
     ? allowedOperators 
     : getDefaultAllowedOperators();
@@ -369,116 +366,21 @@ const isAssetUrl = (value) => (
   /\/(launcher-icon|logo|icon|image|thumbnail|avatar)[^/]*$/i.test(value || '')
 );
 
-// ТАНЫ АНХНЫ ХУУЧИН ОНООНЫ СИСТЕМ ТӨГС ХЭВЭЭРЭЭ ҮЛДЭВ (ОНООГ ХАСАХГҮЙ БОЛГОЖ ЗАСАВ)
-const scoreActionUrl = (url, keyPath) => {
-  const path = keyPath.join('.').toLowerCase();
-  if (!isActionUrl(url) || isAssetUrl(url)) return -1;
-  if (/(logo|icon|image|thumbnail|avatar|qr_image)/i.test(path)) return -1;
-
-  let score = 1;
-  if (/^https?:\/\//i.test(url)) score += 500; 
-  if (/(checkout_url|payment_url|redirect_url|web_url|payment_link)$/.test(path)) score += 200;
-  if (/(checkout|payment|redirect|web)/.test(path)) score += 80;
-  if (/(link)$/.test(path)) score += 40;
-  if (/deeplink/.test(path)) score += 1000; // Өөрчлөлт: Хасах биш нэмэх болгосон
-  if (/^(qpay|khanbank|tdbm|xacbank|golomt|statebank|mbank|most):\/\//i.test(url)) score += 2000; // Нэмэх болгосон
-  if (/s3\.qpay\.mn\/p\//i.test(url)) score += 1500;
-  return score;
-};
-
-const collectActionUrls = (value, keyPath = [], candidates = []) => {
-  if (!value) return candidates;
-
-  if (typeof value === 'string') {
-    const score = scoreActionUrl(value, keyPath);
-    if (score >= 0) candidates.push({ url: value, score });
-    return candidates;
+/**
+ * ШИНЭЧЛЭГДСЭН: Төлбөрийн албан ёсны Hosted Checkout (Вэб хуудасны ухаалаг линк)-ийг 
+ * шууд авч буцаадаг болгов. Онооны хуучин систем, шүүлтүүрүүдийг цэвэрлэв.
+ */
+export const extractActionUrl = (intent) => {
+  if (!intent) return null;
+  
+  // Wire-аас ирдэг албан ёсны Hosted Checkout ухаалаг вэб линк
+  if (intent.next_action?.url) {
+    return intent.next_action.url;
   }
-
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => collectActionUrls(item, [...keyPath, String(index)], candidates));
-    return candidates;
+  
+  if (intent.url) {
+    return intent.url;
   }
-
-  if (typeof value === 'object') {
-    Object.entries(value).forEach(([key, item]) => collectActionUrls(item, [...keyPath, key], candidates));
-  }
-
-  return candidates;
-};
-
-// ТАНЫ АНХНЫ ОНООНЫ ШҮҮЛТҮҮРТЭЙ ФУНКЦ
-export const extractActionUrl = (value) => (
-  collectActionUrls(value)
-    .sort((left, right) => right.score - left.score)[0]?.url || null
-);
-
-export const confirmPaymentIntent = ({ bookingId, paymentIntentId, allowedOperators, returnUrl }) => {
-  if (isLocalWireSandbox()) {
-    return {
-      id: paymentIntentId,
-      object: 'payment_intent',
-      status: 'requires_action',
-      next_action: { url: getSandboxCheckoutUrl(paymentIntentId) },
-      livemode: false,
-    };
-  }
-
-  const operator = getSelectedOperator(allowedOperators);
-  const referenceFields = getPaymentReferenceFields(bookingId);
-  const fullPayload = {
-      return_url: returnUrl,
-      ...referenceFields,
-      ...(operator ? { operator } : {}),
-  };
-
-  return wireRequest(`/payment_intents/${paymentIntentId}/confirm`, {
-    payload: fullPayload,
-    idempotencyKey: `wire-confirm-${bookingId}-${paymentIntentId}`,
-  }).catch((err) => {
-    if (!isPayloadFieldError(err)) throw err;
-    console.warn('[Wire] Reference autofill fields were rejected on confirm; retrying with basic payload.', err.message);
-    return wireRequest(`/payment_intents/${paymentIntentId}/confirm`, {
-      payload: {
-        return_url: returnUrl,
-        ...(operator ? { operator } : {}),
-      },
-      idempotencyKey: `wire-confirm-basic-${bookingId}-${paymentIntentId}`,
-    });
-  });
-};
-
-export const retrievePaymentIntent = async (paymentIntentId, fallback = {}) => {
-  const apiKey = getApiKey();
-  if (isLocalWireSandbox()) {
-    let intent = sandboxIntents.get(paymentIntentId);
-    if (!intent && String(paymentIntentId).startsWith('pi_test_')) {
-      const bookingId = String(paymentIntentId).replace(/^pi_test_/, '');
-      intent = createLocalSandboxPaymentIntent({
-        bookingId,
-        wireAmount: fallback.wireAmount || 0,
-        allowedOperators: ['sandbox'],
-      });
-    }
-    if (!intent) {
-      const err = new Error('Sandbox PaymentIntent was not found.');
-      err.statusCode = 404;
-      throw err;
-    }
-
-    return {
-      ...intent,
-      status: 'succeeded',
-      next_action: { sandbox: 'auto_succeeded' },
-    };
-  }
-
-  if (!apiKey) {
-    const err = new Error('WIRE_API_KEY is not configured.');
-    err.statusCode = 500;
-    throw err;
-  }
-  assertSafeWireMode(apiKey);
-
-  return wireRequest(`/payment_intents/${paymentIntentId}`, { method: 'GET' });
+  
+  return null;
 };
