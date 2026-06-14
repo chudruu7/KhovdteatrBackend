@@ -190,7 +190,6 @@ const isDuplicateWireTransactionError = (err) => (
   /duplicate|давхар|double|already|exists|гүйлгээ/i.test(JSON.stringify(err?.details || {}))
 );
 
-// ЗАСВАРЛАГДСАН ФУНКЦ: Expo-д зориулсан appLinks-ийг найдвартай урагш шиднэ
 const buildWireCheckoutData = ({
   paymentIntentId,
   intent,
@@ -206,7 +205,7 @@ const buildWireCheckoutData = ({
     paymentIntentId,
     paymentIntentStatus: intent?.status || 'pending',
     checkoutUrl,
-    appLinks: rawNextAction?.urls || intent?.urls || [], // Expo-д зориулсан банкны апп линкүүд
+    appLinks: rawNextAction?.urls || intent?.urls || [],
     nextAction: enrichPaymentActionReferences(rawNextAction, transactionReference),
     amount,
     allowedOperators,
@@ -220,11 +219,37 @@ const buildWireCheckoutData = ({
   };
 };
 
-const getWireCheckoutUrlForIntent = ({ intent, paymentIntentId, bookingId }) => (
-  extractActionUrl(enrichPaymentActionReferences(intent?.next_action, bookingId)) ||
-  (intent?.status === 'succeeded' ? `${getFrontendUrl()}/ticket-verify/${bookingId}` : null) ||
-  getWireActionPageUrl(paymentIntentId)
-);
+// ЗАСВАР ОРУУЛСАН ХЭСЭГ: Банкуудын Deep Link-ийг шүүж, Mobile Autofill-ийг шууд ажиллуулна
+const getWireCheckoutUrlForIntent = ({ intent, paymentIntentId, bookingId }) => {
+  if (intent?.status === 'succeeded') {
+    return `${getFrontendUrl()}/ticket-verify/${bookingId}`;
+  }
+
+  // Wire-аас ирсэн банкуудын шууд апп дууддаг Deep Link жагсаалтыг шалгана
+  const appLinks = intent?.next_action?.urls || intent?.urls || [];
+  
+  if (appLinks.length > 0) {
+    // 1. Хаан банкны шууд апп протоколыг шүүж олох (khanbank://...)
+    const khanBank = appLinks.find(link => link.name === 'Khan Bank' || link.url.startsWith('khanbank://'));
+    if (khanBank && khanBank.url) {
+      // Хэрэв Хаан банкны оригинал Deep Link байвал түүнийг шууд буцаана!
+      // Энэ линк нь Хаан банкны апп-ыг нээж, утгыг нь 100% автоматаар бөглөж цоожилно.
+      return enrichPaymentActionReferences(khanBank.url, bookingId);
+    }
+
+    // 2. Хэрэв Хаан банк байхгүй, Токи байвал Токи-ийн линкийг авна
+    const tokiLink = appLinks.find(link => link.name === 'Toki' || link.url.startsWith('toki://'));
+    if (tokiLink && tokiLink.url) {
+      return enrichPaymentActionReferences(tokiLink.url, bookingId);
+    }
+  }
+
+  // 3. Хэрэв дээрх шууд апп линкүүд олдохгүй бол таны анхны хуучин онооны системээр вэб линкийг сонгоно
+  return (
+    extractActionUrl(enrichPaymentActionReferences(intent?.next_action, bookingId)) ||
+    getWireActionPageUrl(paymentIntentId)
+  );
+};
 
 const storeActionPageIfNeeded = ({ intent, paymentIntentId, bookingId, amount }) => {
   const nextAction = enrichPaymentActionReferences(intent?.next_action || intent, bookingId);
@@ -389,7 +414,6 @@ export const createWireCheckout = async (req, res) => {
       amount: wireAmount,
     });
 
-    // ЗАСВАР: finalCheckoutUrl-ийг уншихаас нь өмнө утга оноож (Initialize) алдааг засав
     const finalCheckoutUrl = getWireCheckoutUrlForIntent({
       intent: confirmedIntent,
       paymentIntentId: paymentIntent.id,
@@ -525,7 +549,7 @@ export const renderWireActionCheckout = async (req, res) => {
   <body>
     <main>
       <div class="brand"><span class="badge">W</span><span>Wire checkout</span></div>
-      <h1>Төлбөрөө үргэлжлүүлнэ үү</h1>
+      <h1>Төлбөрөө үргэлжлүүнэ үү</h1>
       <div class="amount">${escapeHtml(amountText)} ₮</div>
       <p class="hint">QR-г банкны апп-аараа уншуулж төлнө үү. Төлбөр ормогц энэ хуудас өөрөө шалгаад тасалбар руу шилжинэ.</p>
       <div class="qr-wrap">${qrImages}</div>
