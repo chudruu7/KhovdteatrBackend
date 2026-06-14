@@ -158,8 +158,8 @@ const verifyPaidIntentForBooking = async ({ paymentIntentId, booking, intent: pr
     throw err;
   }
 
-  const expectedAmount = toWireMntAmount(booking.totalPrice);
-  if (Number(intent.amount) !== expectedAmount || intent.currency !== 'MNT') {
+  const __expectedAmount = toWireMntAmount(booking.totalPrice);
+  if (Number(intent.amount) !== __expectedAmount || intent.currency !== 'MNT') {
     const err = new Error('PaymentIntent дүн эсвэл валют захиалгатай таарахгүй байна.');
     err.statusCode = 400;
     throw err;
@@ -190,6 +190,7 @@ const isDuplicateWireTransactionError = (err) => (
   /duplicate|давхар|double|already|exists|гүйлгээ/i.test(JSON.stringify(err?.details || {}))
 );
 
+// ЗАСВАРЛАГДСАН ФУНКЦ: Expo-д зориулсан appLinks-ийг найдвартай урагш шиднэ
 const buildWireCheckoutData = ({
   paymentIntentId,
   intent,
@@ -200,19 +201,13 @@ const buildWireCheckoutData = ({
   reused = false,
   transactionReference,
 }) => {
-  // Wire-аас ирсэн оригинал нэхэмжлэхийг шүүж авах
   const rawNextAction = intent?.next_action || null;
-  const enrichedNextAction = enrichPaymentActionReferences(rawNextAction, transactionReference);
-
   return {
     paymentIntentId,
     paymentIntentStatus: intent?.status || 'pending',
     checkoutUrl,
-    
-    // ЭНЭ ХЭСГИЙГ ЗАСАВ: Expo (React Native) нээхэд зориулсан банкуудын Deep Link жагсаалт
-    appLinks: rawNextAction?.urls || intent?.urls || [], 
-    
-    nextAction: enrichedNextAction,
+    appLinks: rawNextAction?.urls || intent?.urls || [], // Expo-д зориулсан банкны апп линкүүд
+    nextAction: enrichPaymentActionReferences(rawNextAction, transactionReference),
     amount,
     allowedOperators,
     selectedOperator: intent?.selected_operator,
@@ -294,13 +289,12 @@ export const createWireCheckout = async (req, res) => {
     const wireAmount = toWireMntAmount(booking.totalPrice);
     const transactionReference = getPaymentReference(booking._id);
     if (!wireAmount) return res.status(400).json({ success: false, message: 'Төлбөрийн дүн олдсонгүй.' });
-console.log("=== МАНАЙ СҮЛЖЭЭНД ҮҮССЭН CHECKOUT URL ===", finalCheckoutUrl);
+
     const allowedOperators = getDefaultAllowedOperators();
     const existingPaymentIntentId = (
       booking.payment?.method === 'wire' &&
       isWirePaymentIntentId(booking.payment?.transactionId) &&
       booking.payment.transactionId
-      
     );
 
     if (existingPaymentIntentId && booking.payment?.status === 'pending') {
@@ -387,17 +381,22 @@ console.log("=== МАНАЙ СҮЛЖЭЭНД ҮҮССЭН CHECKOUT URL ===", fin
       returnUrl,
       wireAmount,
     });
+    
     storeActionPageIfNeeded({
       intent: confirmedIntent,
       paymentIntentId: paymentIntent.id,
       bookingId: booking._id,
       amount: wireAmount,
     });
+
+    // ЗАСВАР: finalCheckoutUrl-ийг уншихаас нь өмнө утга оноож (Initialize) алдааг засав
     const finalCheckoutUrl = getWireCheckoutUrlForIntent({
       intent: confirmedIntent,
       paymentIntentId: paymentIntent.id,
       bookingId: booking._id,
     });
+
+    console.log("=== МАНАЙ СҮЛЖЭЭНД ҮҮССЭН CHECKOUT URL ===", finalCheckoutUrl);
 
     booking.payment.method = 'wire';
     booking.payment.status = confirmedIntent.status === 'succeeded' ? 'paid' : 'pending';
