@@ -1,4 +1,4 @@
-﻿// src/controllers/bookingController.js
+// src/controllers/bookingController.js
 import Booking  from '../models/Booking.js';
 import Schedule from '../models/Schedule.js';
 import {
@@ -247,14 +247,14 @@ export const createBooking = async (req, res) => {
       payment: {
         method:        paymentMethod,
         transactionId: `TRX-${Date.now()}`,
-        status:        paymentMethod === 'wire' ? 'pending' : 'paid',
+        status:        (paymentMethod === 'wire' || paymentMethod === 'cash') ? 'pending' : 'paid',
       },
       expiredAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     }).save();
 
     // Бэлэн/кассын төлбөр бол шууд имэйл илгээнэ. Wire checkout төлбөр баталгаажсаны дараа илгээнэ.
     let emailResult = null;
-    if (paymentMethod !== 'wire' && customer.email) {
+    if (paymentMethod !== 'wire' && paymentMethod !== 'cash' && customer.email) {
       emailResult = await sendPaidBookingEmail(booking);
     }
 
