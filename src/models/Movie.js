@@ -30,7 +30,8 @@ const movieSchema = new mongoose.Schema({
         name: { type: String, default: '' },
         role: { type: String, default: '' }
     }],
-    isFeatured:    { type: Boolean, default: false }
+    isFeatured:    { type: Boolean, default: false },
+    notificationSent: { type: Boolean, default: false }
 }, { timestamps: true });
 
 const Movie = mongoose.model('Movie', movieSchema);

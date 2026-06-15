@@ -98,9 +98,14 @@ export const createMovie = async (req, res) => {
         });
 
         console.log('Movie created successfully:', movie._id);
-        notifyUsersAboutNewMovie(movie).catch((error) => {
-            console.error('New movie notification error:', error.message);
-        });
+        if (!movie.notificationSent && (movie.status === 'nowShowing' || movie.status === 'comingSoon')) {
+            notifyUsersAboutNewMovie(movie).then(() => {
+                movie.notificationSent = true;
+                movie.save().catch(err => console.error('Error saving notification flag:', err));
+            }).catch((error) => {
+                console.error('New movie notification error:', error.message);
+            });
+        }
         res.status(201).json(movie);
     } catch (error) {
         console.error('Create movie error:', error);

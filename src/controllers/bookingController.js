@@ -102,6 +102,8 @@ const formatBookingForClient = (booking) => {
 };
 
 const queueMissingPaidEmail = (booking, source) => {
+  if (booking?.customer?.email === 'cashier@khovdteatr.mn') return;
+  
   if (booking?.payment?.status === 'paid' && !booking.ticketEmailSentAt) {
     ensurePaidBookingEmailQueued(booking._id, source);
   }
@@ -199,17 +201,24 @@ export const createBooking = async (req, res) => {
       return res.status(404).json({ message: 'Цагийн хуваарь олдсонгүй.' });
     }
 
+    const isCashier = req.body.isCashier === true || customer?.email === 'cashier@khovdteatr.mn';
+    
     // Суудлыг атомик байдлаар нөөцлөх
-    if (!schedule.showTime || new Date(schedule.showTime).getTime() <= Date.now()) {
+    const showTimeMs = schedule.showTime ? new Date(schedule.showTime).getTime() : 0;
+    const cutoffTimeMs = isCashier ? showTimeMs + 15 * 60 * 1000 : showTimeMs;
+
+    if (!schedule.showTime || cutoffTimeMs <= Date.now()) {
       return res.status(400).json({
         message: 'Энэ үзвэрийн цаг өнгөрсөн тул тасалбар захиалах боломжгүй.',
       });
     }
 
+    const minValidShowTime = isCashier ? new Date(Date.now() - 15 * 60 * 1000) : new Date();
+
     const updated = await Schedule.findOneAndUpdate(
       {
         _id: resolvedScheduleId,
-        showTime: { $gt: new Date() },
+        showTime: { $gt: minValidShowTime },
         soldSeats: { $not: { $elemMatch: { $in: selectedSeats } } }
       },
       { $push: { soldSeats: { $each: selectedSeats } } },
@@ -234,7 +243,9 @@ export const createBooking = async (req, res) => {
     });
     const computedTotalPrice = ticketDetails.reduce((sum, ticket) => sum + ticket.price, 0);
 
-    // Booking үүсгэх — Wire урсгалд payment.status = 'pending'
+    const resolvedPaymentStatus = isCashier ? 'paid' : ((paymentMethod === 'wire' || paymentMethod === 'cash') ? 'pending' : 'paid');
+
+    // Booking үүсгэх
     const booking = await new Booking({
       schedule:   resolvedScheduleId,
       movie:      schedule.movie || movieId,
@@ -247,14 +258,13 @@ export const createBooking = async (req, res) => {
       payment: {
         method:        paymentMethod,
         transactionId: `TRX-${Date.now()}`,
-        status:        (paymentMethod === 'wire' || paymentMethod === 'cash') ? 'pending' : 'paid',
+        status:        resolvedPaymentStatus,
       },
       expiredAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     }).save();
 
-    // Бэлэн/кассын төлбөр бол шууд имэйл илгээнэ. Wire checkout төлбөр баталгаажсаны дараа илгээнэ.
     let emailResult = null;
-    if (paymentMethod !== 'wire' && paymentMethod !== 'cash' && customer.email) {
+    if (resolvedPaymentStatus === 'paid' && customer.email && !isCashier) {
       emailResult = await sendPaidBookingEmail(booking);
     }
 

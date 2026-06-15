@@ -198,10 +198,12 @@ export const sendBookingConfirmation = async ({
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
   <title>Тасалбар</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 </head>
-<body style="margin:0;padding:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#1e293b;background:linear-gradient(135deg,#f0f4ff 0%,#e8f0fe 25%,#fce7f3 50%,#f0f9ff 75%,#f3e8ff 100%);background-attachment:fixed;">
+<body style="margin:0;padding:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#1e293b !important;background:linear-gradient(135deg,#f0f4ff 0%,#e8f0fe 25%,#fce7f3 50%,#f0f9ff 75%,#f3e8ff 100%);background-attachment:fixed;">
   <div style="display:none;max-height:0;overflow:hidden;">🎬 Таны тасалбар баталгаажлаа. Үүдэнд QR кодоо уншуулна уу.</div>
   
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
@@ -225,8 +227,8 @@ export const sendBookingConfirmation = async ({
             <td style="padding:0 0 24px;text-align:center;">
               <div style="display:inline-block;padding:28px 24px;border-radius:28px;${glassStyle(0.15, '16px')};text-align:center;">
                 <div style="font-size:48px;margin-bottom:8px;">🎬</div>
-                <h1 style="margin:0 0 8px;font-size:28px;font-weight:900;color:#1e293b;line-height:1.2;">${escapeHtml(movieTitle)}</h1>
-                <p style="margin:0;font-size:15px;color:#64748b;line-height:1.5;">Сайн байна уу, <strong style="color:#7c3aed;">${escapeHtml(customer?.name || 'үзэгч')}</strong>!<br/>Доорх QR кодыг үүдэнд уншуулна уу 🎟️</p>
+                <h1 style="margin:0 0 8px;font-size:28px;font-weight:900;color:#1e293b !important;line-height:1.2;">${escapeHtml(movieTitle)}</h1>
+                <p style="margin:0;font-size:15px;color:#64748b !important;line-height:1.5;">Сайн байна уу, <strong style="color:#7c3aed !important;">${escapeHtml(customer?.name || 'үзэгч')}</strong>!<br/>Доорх QR кодыг үүдэнд уншуулна уу 🎟️</p>
               </div>
             </td>
           </tr>
@@ -260,12 +262,12 @@ export const sendBookingConfirmation = async ({
                     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-bottom:16px;">
                       <tr>
                         <td style="width:50%;padding:16px;border-radius:18px 0 0 18px;${glassStyle(0.18, '10px')};border-right:0;">
-                          <div style="font-size:11px;color:#64748b;font-weight:700;letter-spacing:.1em;margin-bottom:6px;">📅 ОГНОО</div>
-                          <div style="font-size:18px;color:#1e293b;font-weight:800;">${escapeHtml(date)}</div>
+                          <div style="font-size:11px;color:#64748b !important;font-weight:700;letter-spacing:.1em;margin-bottom:6px;">📅 ОГНОО</div>
+                          <div style="font-size:18px;color:#1e293b !important;font-weight:800;">${escapeHtml(date)}</div>
                         </td>
                         <td style="width:50%;padding:16px;border-radius:0 18px 18px 0;${glassStyle(0.18, '10px')};">
-                          <div style="font-size:11px;color:#64748b;font-weight:700;letter-spacing:.1em;margin-bottom:6px;">⏰ ЦАГ</div>
-                          <div style="font-size:18px;color:#1e293b;font-weight:800;">${escapeHtml(time)}</div>
+                          <div style="font-size:11px;color:#64748b !important;font-weight:700;letter-spacing:.1em;margin-bottom:6px;">⏰ ЦАГ</div>
+                          <div style="font-size:18px;color:#1e293b !important;font-weight:800;">${escapeHtml(time)}</div>
                         </td>
                       </tr>
                     </table>
@@ -274,12 +276,12 @@ export const sendBookingConfirmation = async ({
                     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-bottom:20px;">
                       <tr>
                         <td style="width:50%;padding:16px;border-radius:18px 0 0 18px;${glassStyle(0.22, '10px')};background:linear-gradient(135deg,rgba(124,58,237,0.08),rgba(236,72,153,0.06));border-right:0;">
-                          <div style="font-size:11px;color:#64748b;font-weight:700;letter-spacing:.1em;margin-bottom:6px;">🏛️ ТАНХИМ</div>
-                          <div style="font-size:16px;color:#1e293b;font-weight:700;">${escapeHtml(hall || 'Танхим')}</div>
+                          <div style="font-size:11px;color:#64748b !important;font-weight:700;letter-spacing:.1em;margin-bottom:6px;">🏛️ ТАНХИМ</div>
+                          <div style="font-size:16px;color:#1e293b !important;font-weight:700;">${escapeHtml(hall || 'Танхим')}</div>
                         </td>
                         <td style="width:50%;padding:16px;border-radius:0 18px 18px 0;${glassStyle(0.15, '10px')};background:linear-gradient(135deg,rgba(59,130,246,0.06),rgba(168,85,247,0.04));">
-                          <div style="font-size:11px;color:#64748b;font-weight:700;letter-spacing:.1em;margin-bottom:6px;">🔢 ЗАХИАЛГА</div>
-                          <div style="font-size:14px;color:#1e293b;font-weight:700;word-break:break-all;">${escapeHtml(orderId)}</div>
+                          <div style="font-size:11px;color:#64748b !important;font-weight:700;letter-spacing:.1em;margin-bottom:6px;">🔢 ЗАХИАЛГА</div>
+                          <div style="font-size:14px;color:#1e293b !important;font-weight:700;word-break:break-all;">${escapeHtml(orderId)}</div>
                         </td>
                       </tr>
                     </table>
@@ -294,8 +296,8 @@ export const sendBookingConfirmation = async ({
                     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
                       <tr>
                         <td style="padding:20px 22px;border-radius:22px;${glassStyle(0.2, '14px')};background:linear-gradient(135deg,rgba(124,58,237,0.1),rgba(236,72,153,0.08));">
-                          <div style="font-size:12px;color:#7c3aed;font-weight:800;letter-spacing:.1em;margin-bottom:6px;">💰 НИЙТ ТӨЛБӨР</div>
-                          <div style="font-size:32px;font-weight:900;color:#1e293b;">${formatMoney(totalPrice)}</div>
+                          <div style="font-size:12px;color:#7c3aed !important;font-weight:800;letter-spacing:.1em;margin-bottom:6px;">💰 НИЙТ ТӨЛБӨР</div>
+                          <div style="font-size:32px;font-weight:900;color:#1e293b !important;">${formatMoney(totalPrice)}</div>
                         </td>
                       </tr>
                     </table>
@@ -310,18 +312,20 @@ export const sendBookingConfirmation = async ({
                 <!-- QR Code Section -->
                 <tr>
                   <td style="padding:26px 28px 30px;text-align:center;">
-                    <div style="font-size:13px;color:#64748b;font-weight:800;letter-spacing:.1em;margin-bottom:16px;">
+                    <div style="font-size:13px;color:#64748b !important;font-weight:800;letter-spacing:.1em;margin-bottom:16px;">
                       📱 QR КОДЫГ ХАДГАЛНА УУ.
                     </div>
                     
                     <!-- QR Code Container -->
                     <div style="display:inline-block;padding:18px;border-radius:26px;${glassStyle(0.25, '16px')};">
-                      <img src="${qrImageUrl}" width="200" height="200" alt="Ticket QR" style="display:block;width:200px;height:200px;border:0;border-radius:16px;"/>
+                      <a href="${qrImageUrl}" download="ticket_qr.png" title="QR татах">
+                        <img src="${qrImageUrl}" width="200" height="200" alt="Ticket QR" style="display:block;width:200px;height:200px;border:0;border-radius:16px;"/>
+                      </a>
                     </div>
                     
-                    <p style="margin:16px auto 0;max-width:380px;color:#64748b;font-size:13px;line-height:1.55;">
-                      QR уншихгүй бол захиалгын дугаараа хэлнэ үү:<br/>
-                      <strong style="color:#7c3aed;font-size:14px;">${escapeHtml(orderId)}</strong>
+                    <p style="margin:16px auto 0;max-width:380px;color:#64748b !important;font-size:13px;line-height:1.55;">
+                      Дээрх зурган дээр дарж <strong>QR татаж авна уу</strong>.<br/><br/>
+                      Мөн та <strong style="color:#7c3aed !important;">Профайл -> Миний тасалбарууд -> Дэлгэрэнгүй</strong> дарж QR харах боломжтой.
                     </p>
                     
                     <!-- Action Buttons -->
@@ -453,10 +457,12 @@ export const sendNewMovieNotification = async ({ to, userName, movie, frontendUr
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
   <title>Шинэ үзвэр</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 </head>
-<body style="margin:0;padding:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#1e293b;background:linear-gradient(135deg,#f0f4ff 0%,#fce7f3 35%,#f0f9ff 65%,#f3e8ff 100%);background-attachment:fixed;">
+<body style="margin:0;padding:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#1e293b !important;background:linear-gradient(135deg,#f0f4ff 0%,#fce7f3 35%,#f0f9ff 65%,#f3e8ff 100%);background-attachment:fixed;">
   
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
     <tr>
@@ -493,13 +499,13 @@ export const sendNewMovieNotification = async ({ to, userName, movie, frontendUr
                     </div>
                     
                     <!-- Title -->
-                    <h1 style="margin:0 0 16px;font-size:28px;font-weight:900;color:#1e293b;text-align:center;line-height:1.3;">
+                    <h1 style="margin:0 0 16px;font-size:28px;font-weight:900;color:#1e293b !important;text-align:center;line-height:1.3;">
                       🎞️ ${escapeHtml(title)}
                     </h1>
                     
                     <!-- Greeting -->
-                    <p style="margin:0 0 16px;font-size:15px;color:#475569;text-align:center;line-height:1.6;">
-                      Сайн байна уу, <strong style="color:#7c3aed;">${escapeHtml(userName || 'үзэгч')}</strong>! 🎉<br/>
+                    <p style="margin:0 0 16px;font-size:15px;color:#475569 !important;text-align:center;line-height:1.6;">
+                      Сайн байна уу, <strong style="color:#7c3aed !important;">${escapeHtml(userName || 'үзэгч')}</strong>! 🎉<br/>
                       Манай театрын системд шинэ үзвэр нэмэгдлээ.
                     </p>
                     
