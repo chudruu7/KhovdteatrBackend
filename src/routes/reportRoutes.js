@@ -17,6 +17,7 @@ router.get('/financial/daily',            ctrl.dailySales);
 router.get('/financial/monthly',          ctrl.monthlySales);
 router.get('/financial/payment-methods',  ctrl.paymentMethods);
 router.get('/financial/refunds',          ctrl.refunds);
+router.get('/financial/transactions',     ctrl.transactionLogs);
 
 // ── Үзвэр ба үзэлт ─────────────────────────────────────────
 router.get('/movies/viewership',          ctrl.movieViewership);

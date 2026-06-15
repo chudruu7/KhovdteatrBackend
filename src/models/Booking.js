@@ -37,6 +37,10 @@ const bookingSchema = new mongoose.Schema({
     type: Number,
     required: true,
   },
+  totalPrice: {
+    type: Number,
+    required: true,
+  },
   status: {
     type: String,
     enum: ['active', 'used', 'cancelled'],
@@ -45,7 +49,6 @@ const bookingSchema = new mongoose.Schema({
   payment: {
     method: {
       type: String,
-      enum: ['card', 'cash', 'wire', 'other'],
       required: true,
     },
     transactionId: { type: String, default: null },

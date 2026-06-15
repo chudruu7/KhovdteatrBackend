@@ -3,7 +3,7 @@ import Booking from '../models/Booking.js';
 import CashierScan from '../models/CashierScan.js';
 
 const THEATER_TIME_ZONE = 'Asia/Hovd';
-const ENTRY_BEFORE_MINUTES = 90;
+const ENTRY_BEFORE_MINUTES = 30;
 const ENTRY_AFTER_MINUTES = 30;
 
 const formatTheaterDateTime = (value) => {
