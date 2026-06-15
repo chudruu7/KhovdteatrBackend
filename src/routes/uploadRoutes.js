@@ -6,7 +6,7 @@ import { admin, protect } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
-const UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'images');
+const UPLOAD_DIR = path.join(process.cwd(), 'upload');
 
 const EXT_BY_TYPE = {
   'image/jpeg': 'jpg',
@@ -56,7 +56,7 @@ router.post(
       await fs.writeFile(filePath, req.body);
 
       const protocol = req.get('x-forwarded-proto') || req.protocol;
-      const url = `${protocol}://${req.get('host')}/uploads/images/${filename}`;
+      const url = `${protocol}://${req.get('host')}/upload/${filename}`;
       return res.status(201).json({ success: true, url });
     } catch (error) {
       console.error('Image upload error:', error);
