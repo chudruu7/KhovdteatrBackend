@@ -167,8 +167,8 @@ export const getPaymentReference = (bookingId) => (
   `KDT-${String(bookingId || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase()}`
 );
 
-const getPaymentReferenceFields = (bookingId) => {
-  const transactionReference = getPaymentReference(bookingId);
+const getPaymentReferenceFields = (bookingId, suffix = '') => {
+  const transactionReference = getPaymentReference(bookingId) + suffix;
   return {
     description: transactionReference,
     note: transactionReference,
@@ -329,35 +329,46 @@ export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperat
 
   assertLiveOperators(finalOperators);
 
-  const referenceFields = getPaymentReferenceFields(bookingId);
-  const payload = {
-    amount: wireAmount,
-    currency: 'MNT',
-    automatic_operator: shouldUseAutomaticOperator(finalOperators),
-    allowed_operators: finalOperators.length ? finalOperators : undefined,
-    ...referenceFields,
+  const attemptCreate = async (suffix) => {
+    const referenceFields = getPaymentReferenceFields(bookingId, suffix);
+    const payload = {
+      amount: wireAmount,
+      currency: 'MNT',
+      automatic_operator: shouldUseAutomaticOperator(finalOperators),
+      allowed_operators: finalOperators.length ? finalOperators : undefined,
+      ...referenceFields,
+    };
+
+    try {
+      return await wireRequest('/payment_intents', {
+        payload,
+        idempotencyKey: `wire-pi-${bookingId}-${wireAmount}${suffix}`,
+      });
+    } catch (err) {
+      const isDuplicate = /duplicate|давхар|double|already|exists|гүйлгээ/i.test(err.message || '') || /duplicate|давхар|double|already|exists|гүйлгээ/i.test(JSON.stringify(err.details || {}));
+      if (isDuplicate && !suffix) {
+        console.warn(`[Wire] Duplicate error on create, retrying with suffix...`, err.message);
+        return attemptCreate(`-${Math.floor(Math.random() * 10000)}`);
+      }
+      
+      if (!isPayloadFieldError(err)) throw err;
+      console.warn('[Wire] Reference autofill fields were rejected on create; retrying with basic description/metadata.', err.message);
+      return wireRequest('/payment_intents', {
+        payload: {
+          amount: wireAmount,
+          currency: 'MNT',
+          automatic_operator: shouldUseAutomaticOperator(finalOperators),
+          allowed_operators: finalOperators.length ? finalOperators : undefined,
+          description: referenceFields.description,
+          metadata: referenceFields.metadata,
+        },
+        idempotencyKey: `wire-pi-basic-${bookingId}-${wireAmount}${suffix}`,
+      });
+    }
   };
 
-  try {
-    return await wireRequest('/payment_intents', {
-      payload,
-      idempotencyKey: `wire-pi-${bookingId}-${wireAmount}`,
-    });
-  } catch (err) {
-    if (!isPayloadFieldError(err)) throw err;
-    console.warn('[Wire] Reference autofill fields were rejected on create; retrying with basic description/metadata.', err.message);
-    return wireRequest('/payment_intents', {
-      payload: {
-        amount: wireAmount,
-        currency: 'MNT',
-        automatic_operator: shouldUseAutomaticOperator(finalOperators),
-        allowed_operators: finalOperators.length ? finalOperators : undefined,
-        description: referenceFields.description,
-        metadata: referenceFields.metadata,
-      },
-      idempotencyKey: `wire-pi-basic-${bookingId}-${wireAmount}`,
-    });
-  }
+  const randomSuffix = `-${Math.floor(1000 + Math.random() * 9000)}`;
+  return attemptCreate(randomSuffix);
 };
 
 const isActionUrl = (value) => /^[a-z][a-z0-9+.-]*:\/\//i.test(value || '');
@@ -379,10 +390,8 @@ export const confirmPaymentIntent = async ({ bookingId, paymentIntentId, allowed
   }
 
   const operator = getSelectedOperator(allowedOperators);
-  const referenceFields = getPaymentReferenceFields(bookingId);
   const fullPayload = {
       return_url: returnUrl,
-      ...referenceFields,
       ...(operator ? { operator } : {}),
   };
 

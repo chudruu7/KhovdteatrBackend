@@ -305,15 +305,11 @@ export const createWireCheckout = async (req, res) => {
       booking.payment.transactionId
     );
 
+    // Зөвхөн амжилттай төлөгдсөн intent байвал дахин ашиглана
     if (existingPaymentIntentId && booking.payment?.status === 'pending') {
       try {
-        const existingIntent = await retrievePaymentIntent(existingPaymentIntentId, { wireAmount });
-        const existingAmountMatches = (
-          Number(existingIntent.amount) === wireAmount &&
-          existingIntent.currency === 'MNT'
-        );
-
-        if (existingIntent.status === 'succeeded') {
+        const existingIntent = await retrievePaymentIntent(existingPaymentIntentId, { wireAmount }).catch(() => null);
+        if (existingIntent && existingIntent.status === 'succeeded') {
           await verifyPaidIntentForBooking({
             paymentIntentId: existingPaymentIntentId,
             booking,
@@ -339,31 +335,8 @@ export const createWireCheckout = async (req, res) => {
             }),
           });
         }
-
-        if (existingAmountMatches && reusableWireStatuses.has(String(existingIntent.status || '').toLowerCase())) {
-          const checkoutUrl = getWireCheckoutUrlForIntent({
-            intent: existingIntent,
-            paymentIntentId: existingPaymentIntentId,
-            bookingId: booking._id,
-          });
-
-          return res.json({
-            success: true,
-            data: buildWireCheckoutData({
-              paymentIntentId: existingPaymentIntentId,
-              intent: existingIntent,
-              checkoutUrl: checkoutUrl,
-              amount: wireAmount,
-              allowedOperators,
-              reused: true,
-              transactionReference,
-            }),
-          });
-        }
       } catch (err) {
-        console.warn('[Wire] Existing payment intent lookup failed; refusing to create a duplicate checkout:', err.message);
-        err.statusCode = err.statusCode || 502;
-        throw err;
+        console.warn('[Wire] Failed to verify existing intent status, falling back to new intent:', err.message);
       }
     }
 
