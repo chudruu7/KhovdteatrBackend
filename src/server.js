@@ -153,7 +153,7 @@ setInterval(() => {
     console.error('[Booking/Fulfillment] Scheduled unsent paid email scan failed:', err.message);
   });
 }, 60 * 1000);
-const PORT = process.env.PORT || 5000; // Render өөрийн PORT-ыг энд дамжуулдаг
+const PORT = process.env.PORT || 6000; // Render өөрийн PORT-ыг энд дамжуулдаг
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running on port ${PORT}`);
   console.log('Бүртгэгдсэн route-ууд:');
