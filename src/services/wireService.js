@@ -163,10 +163,12 @@ const getSandboxCheckoutUrl = (paymentIntentId) => (
   `${getPublicApiUrl()}/api/wire/sandbox/checkout/${paymentIntentId}`
 );
 
+// ЗАСВАРЛАГДСАН ХЭСЭГ: ХААН Банкинд зориулж дундах '-' (зураас)-ыг устгав
 export const getPaymentReference = (bookingId) => (
-  `KDT-${String(bookingId || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase()}`
+  `KDT${String(bookingId || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase()}`
 );
 
+// ЗАСВАРЛАГДСАН ХЭСЭГ: Банкны аппликейшнүүдэд утгыг харуулах талбаруудыг хүчээр нэмж өгөв
 const getPaymentReferenceFields = (bookingId, suffix = '') => {
   const transactionReference = getPaymentReference(bookingId) + suffix;
   return {
@@ -181,12 +183,16 @@ const getPaymentReferenceFields = (bookingId, suffix = '') => {
     transaction_reference: transactionReference,
     transaction_description: transactionReference,
     statement_descriptor: transactionReference,
+    invoice_id: transactionReference,       // Олон системийн үндсэн инвойс талбар
+    client_reference: transactionReference, // Клиент лавлах талбар
+    utga: transactionReference,             // Монгол банкны аппуудын таньдаг талбар
     metadata: {
       booking_id: String(bookingId),
       reference: transactionReference,
       payment_reference: transactionReference,
       transaction_reference: transactionReference,
       description: transactionReference,
+      invoice_id: transactionReference,
     },
   };
 };
@@ -220,8 +226,9 @@ const withReferenceQueryParams = (url, transactionReference) => {
   }
 };
 
+// ЗАСВАРЛАГДСАН ХЭСЭГ: Зураасгүй болсон тул startsWith('KDT') шалгуурыг засав
 export const enrichPaymentActionReferences = (value, bookingId) => {
-  const transactionReference = String(bookingId || '').startsWith('KDT-')
+  const transactionReference = String(bookingId || '').startsWith('KDT')
     ? String(bookingId)
     : getPaymentReference(bookingId);
   if (!value || !transactionReference) return value;
@@ -316,6 +323,7 @@ const createLocalSandboxPaymentIntent = ({ bookingId, wireAmount, allowedOperato
   return intent;
 };
 
+// ЗАСВАРЛАГДСАН ХЭСЭГ: Давхардлаас сэргийлж залгах suffix тоонуудын урд талын '-' зураасыг устгав
 export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperators }) => {
   if (isLocalWireSandbox()) {
     return createLocalSandboxPaymentIntent({ bookingId, wireAmount, allowedOperators });
@@ -348,7 +356,7 @@ export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperat
       const isDuplicate = /duplicate|давхар|double|already|exists|гүйлгээ/i.test(err.message || '') || /duplicate|давхар|double|already|exists|гүйлгээ/i.test(JSON.stringify(err.details || {}));
       if (isDuplicate && !suffix) {
         console.warn(`[Wire] Duplicate error on create, retrying with suffix...`, err.message);
-        return attemptCreate(`-${Math.floor(Math.random() * 10000)}`);
+        return attemptCreate(`${Math.floor(Math.random() * 10000)}`);
       }
       
       if (!isPayloadFieldError(err)) throw err;
@@ -367,7 +375,7 @@ export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperat
     }
   };
 
-  const randomSuffix = `-${Math.floor(1000 + Math.random() * 9000)}`;
+  const randomSuffix = `${Math.floor(1000 + Math.random() * 9000)}`;
   return attemptCreate(randomSuffix);
 };
 
@@ -377,7 +385,6 @@ const isAssetUrl = (value) => (
   /\/(launcher-icon|logo|icon|image|thumbnail|avatar)[^/]*$/i.test(value || '')
 );
 
-// ЗАСВАРЛАГДСАН ХЭСЭГ: wireController.js-д шаардлагатай confirmPaymentIntent-ийг export хийв
 export const confirmPaymentIntent = async ({ bookingId, paymentIntentId, allowedOperators, returnUrl }) => {
   if (isLocalWireSandbox()) {
     return {
@@ -436,7 +443,6 @@ export const retrievePaymentIntent = async (paymentIntentId, fallback = {}) => {
   return wireRequest(`/payment_intents/${paymentIntentId}`, { method: 'GET' });
 };
 
-// ЗАСВАРЛАГДСАН ХЭСЭГ: Албан ёсны Hosted Checkout ухаалаг линкийг буцаана
 export const extractActionUrl = (intent) => {
   if (!intent) return null;
   
