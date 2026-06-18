@@ -6,13 +6,11 @@ import {
   enrichPaymentActionReferences,
   extractActionUrl,
   getDefaultAllowedOperators,
-  getWireActionPage,
   getWireActionPageUrl,
   getPaymentReference,
   isLocalWireSandbox,
   isWireTestMode,
   retrievePaymentIntent,
-  storeWireActionPage,
 } from '../services/wireService.js';
 import { markBookingPaidAndNotify } from '../services/bookingFulfillmentService.js';
 
@@ -219,32 +217,15 @@ const buildWireCheckoutData = ({
   };
 };
 
-// ШИНЭЧЛЭГДСЭН: Ухаалаг Hosted Checkout-ын линкийг Frontend рүү шууд дамжуулна
 const getWireCheckoutUrlForIntent = ({ intent, paymentIntentId, bookingId }) => {
   if (intent?.status === 'succeeded') {
     return `${getFrontendUrl()}/ticket-verify/${bookingId}`;
   }
-
-  // Шүүлтүүргүйгээр шууд Wire-ийн бэлэн Hosted вэб линкийг авна
   const officialUrl = extractActionUrl(intent);
   if (officialUrl) {
     return enrichPaymentActionReferences(officialUrl, bookingId);
   }
-
   return getWireActionPageUrl(paymentIntentId);
-};
-
-const storeActionPageIfNeeded = ({ intent, paymentIntentId, bookingId, amount }) => {
-  const nextAction = enrichPaymentActionReferences(intent?.next_action || intent, bookingId);
-  const checkoutUrl = extractActionUrl(intent);
-  if (!checkoutUrl && intent?.status !== 'succeeded') {
-    storeWireActionPage({
-      paymentIntentId,
-      bookingId: String(bookingId),
-      amount,
-      nextAction,
-    });
-  }
 };
 
 const confirmPaymentIntentSafely = async ({
@@ -271,7 +252,7 @@ const confirmPaymentIntentSafely = async ({
   } catch (err) {
     if (!isDuplicateWireTransactionError(err)) throw err;
     const intent = await retrievePaymentIntent(paymentIntentId, { wireAmount });
-    console.warn('[Wire] Confirm returned duplicate transaction warning; reusing existing intent.', {
+    console.warn('[Wire] Confirm duplicate warning, reusing intent.', {
       bookingId: String(bookingId),
       paymentIntentId,
       status: intent?.status,
@@ -305,38 +286,71 @@ export const createWireCheckout = async (req, res) => {
       booking.payment.transactionId
     );
 
-    // Зөвхөн амжилттай төлөгдсөн intent байвал дахин ашиглана
+    // QPAY ЗАГВАР: Хэрэв идэвхтэй нэхэмжлэх байвал шинийг үүсгэлгүй шууд дахин ашиглана
     if (existingPaymentIntentId && booking.payment?.status === 'pending') {
       try {
         const existingIntent = await retrievePaymentIntent(existingPaymentIntentId, { wireAmount }).catch(() => null);
-        if (existingIntent && existingIntent.status === 'succeeded') {
-          await verifyPaidIntentForBooking({
-            paymentIntentId: existingPaymentIntentId,
-            booking,
-            intent: existingIntent,
-          });
-          const fulfilled = await markBookingPaidAndNotify({
-            bookingId: booking._id,
-            paymentMethod: 'wire',
-            transactionId: existingPaymentIntentId,
-            awaitEmail: false,
-          });
-          return res.json({
-            success: true,
-            data: buildWireCheckoutData({
+        if (existingIntent) {
+          if (existingIntent.status === 'succeeded') {
+            await verifyPaidIntentForBooking({
               paymentIntentId: existingPaymentIntentId,
+              booking,
               intent: existingIntent,
-              checkoutUrl: `${getFrontendUrl()}/ticket-verify/${booking._id}`,
-              amount: wireAmount,
+            });
+            const fulfilled = await markBookingPaidAndNotify({
+              bookingId: booking._id,
+              paymentMethod: 'wire',
+              transactionId: existingPaymentIntentId,
+              awaitEmail: false,
+            });
+            return res.json({
+              success: true,
+              data: buildWireCheckoutData({
+                paymentIntentId: existingPaymentIntentId,
+                intent: existingIntent,
+                checkoutUrl: `${getFrontendUrl()}/ticket-verify/${booking._id}`,
+                amount: wireAmount,
+                allowedOperators,
+                emailResult: fulfilled.emailResult,
+                reused: true,
+                transactionReference,
+              }),
+            });
+          } else if (reusableWireStatuses.has(existingIntent.status)) {
+            const confirmedIntent = await confirmPaymentIntentSafely({
+              bookingId: booking._id,
+              paymentIntentId: existingPaymentIntentId,
               allowedOperators,
-              emailResult: fulfilled.emailResult,
-              reused: true,
-              transactionReference,
-            }),
-          });
+              returnUrl: getWireReturnUrl(booking._id, successUrl),
+              wireAmount,
+            });
+
+            const finalCheckoutUrl = getWireCheckoutUrlForIntent({
+              intent: confirmedIntent,
+              paymentIntentId: existingPaymentIntentId,
+              bookingId: booking._id,
+            });
+
+            return res.json({
+              success: true,
+              data: buildWireCheckoutData({
+                paymentIntentId: existingPaymentIntentId,
+                intent: {
+                  ...existingIntent,
+                  ...confirmedIntent,
+                  status: confirmedIntent.status || existingIntent.status,
+                },
+                checkoutUrl: finalCheckoutUrl,
+                amount: wireAmount,
+                allowedOperators,
+                reused: true,
+                transactionReference,
+              }),
+            });
+          }
         }
       } catch (err) {
-        console.warn('[Wire] Failed to verify existing intent status, falling back to new intent:', err.message);
+        console.warn('[Wire] Failed to reuse intent, falling back to new intent:', err.message);
       }
     }
 
@@ -354,22 +368,12 @@ export const createWireCheckout = async (req, res) => {
       returnUrl,
       wireAmount,
     });
-    
-    storeActionPageIfNeeded({
-      intent: confirmedIntent,
-      paymentIntentId: paymentIntent.id,
-      bookingId: booking._id,
-      amount: wireAmount,
-    });
 
-    // ЗАСВАР: finalCheckoutUrl-ийг үүсгэх дараалал зөв болсон
     const finalCheckoutUrl = getWireCheckoutUrlForIntent({
       intent: confirmedIntent,
       paymentIntentId: paymentIntent.id,
       bookingId: booking._id,
     });
-
-    console.log("=== МАНАЙ СҮЛЖЭЭНД ҮҮССЭН CHECKOUT URL ===", finalCheckoutUrl);
 
     booking.payment.method = 'wire';
     booking.payment.status = confirmedIntent.status === 'succeeded' ? 'paid' : 'pending';
@@ -396,8 +400,6 @@ export const createWireCheckout = async (req, res) => {
           ...confirmedIntent,
           status: confirmedIntent.status || paymentIntent.status,
           next_action: confirmedIntent.next_action || null,
-          selected_operator: confirmedIntent.selected_operator || paymentIntent.selected_operator,
-          livemode: confirmedIntent.livemode ?? paymentIntent.livemode,
         },
         checkoutUrl: finalCheckoutUrl,
         amount: wireAmount,
@@ -446,30 +448,42 @@ export const renderWireSandboxCheckout = async (req, res) => {
 </html>`);
 };
 
+// ШИНЭЧЛЭГДСЭН (Stateless): Санах ойн Map ашиглахгүйгээр DB болон API-аас шууд дуудна
 export const renderWireActionCheckout = async (req, res) => {
-  const page = getWireActionPage(req.params.paymentIntentId);
-  if (!page) {
-    return res.status(404).type('html').send('<!doctype html><meta charset="utf-8"><h1>Checkout expired</h1><p>Checkout expired. Please try again from your booking.</p>');
-  }
+  try {
+    const { paymentIntentId } = req.params;
+    const booking = await Booking.findOne({ 'payment.transactionId': paymentIntentId });
+    if (!booking) {
+      return res.status(404).type('html').send('<!doctype html><meta charset="utf-8"><h1>Захиалга олдсонгүй</h1><p>Уг төлбөрт холбогдох захиалга олдсонгүй эсвэл хугацаа нь дууссан байна.</p>');
+    }
 
-  const view = collectPaymentActionView(page.nextAction);
-  const amountText = fromWireMntAmount(page.amount).toLocaleString('mn-MN');
-  const linkButtons = view.links.map((link) => `
-    <a class="pay-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">
-      <span>${escapeHtml(link.label)}</span>
-    </a>
-  `).join('');
-  const qrImages = view.qrImages.map((src) => `<img class="qr" src="${escapeHtml(src)}" alt="Payment QR" />`).join('');
-  const qrTexts = view.qrTexts.map((text) => `
-    <details class="qr-text">
-      <summary>QR код харагдахгүй бол энд дарна уу</summary>
-      <code>${escapeHtml(text)}</code>
-    </details>
-  `).join('');
-  const statusUrl = `/api/wire/checkout/action/${encodeURIComponent(req.params.paymentIntentId)}/status`;
-  const doneUrl = `${getFrontendUrl()}/ticket-verify/${encodeURIComponent(page.bookingId)}`;
+    const wireAmount = toWireMntAmount(booking.totalPrice);
+    const intent = await retrievePaymentIntent(paymentIntentId, { wireAmount }).catch(() => null);
+    if (!intent) {
+      return res.status(404).type('html').send('<!doctype html><meta charset="utf-8"><h1>Төлбөр олдсонгүй</h1><p>Системээс төлбөрийн мэдээлэл олдсонгүй.</p>');
+    }
 
-  res.type('html').send(`<!doctype html>
+    const nextAction = enrichPaymentActionReferences(intent.next_action || intent, booking._id);
+    const view = collectPaymentActionView(nextAction);
+    const amountText = fromWireMntAmount(intent.amount || wireAmount).toLocaleString('mn-MN');
+
+    const linkButtons = view.links.map((link) => `
+      <a class="pay-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">
+        <span>${escapeHtml(link.label)}</span>
+      </a>
+    `).join('');
+    const qrImages = view.qrImages.map((src) => `<img class="qr" src="${escapeHtml(src)}" alt="Payment QR" />`).join('');
+    const qrTexts = view.qrTexts.map((text) => `
+      <details class="qr-text">
+        <summary>QR код харагдахгүй бол энд дарна уу</summary>
+        <code>${escapeHtml(text)}</code>
+      </details>
+    `).join('');
+    
+    const statusUrl = `/api/wire/checkout/action/${encodeURIComponent(paymentIntentId)}/status`;
+    const doneUrl = `${getFrontendUrl()}/ticket-verify/${encodeURIComponent(booking._id)}`;
+
+    res.type('html').send(`<!doctype html>
 <html lang="mn">
   <head>
     <meta charset="utf-8" />
@@ -534,18 +548,20 @@ export const renderWireActionCheckout = async (req, res) => {
         }
       }
       checkPaid();
-      setInterval(checkPaid, 1000);
+      setInterval(checkPaid, 1500);
     </script>
   </body>
 </html>`);
+  } catch (err) {
+    return res.status(500).type('html').send(`<!doctype html><meta charset="utf-8"><h1>Алдаа гарлаа</h1><p>${escapeHtml(err.message)}</p>`);
+  }
 };
 
+// ШИНЭЧЛЭГДСЭН (Stateless): Найдвартай төлөв шалгалт
 export const getWireActionCheckoutStatus = async (req, res) => {
   try {
-    const page = getWireActionPage(req.params.paymentIntentId);
-    if (!page) return res.status(404).json({ success: false, paid: false, message: 'Checkout expired.' });
-
-    const booking = await Booking.findById(page.bookingId);
+    const { paymentIntentId } = req.params;
+    const booking = await Booking.findOne({ 'payment.transactionId': paymentIntentId });
     if (!booking) return res.status(404).json({ success: false, paid: false, message: 'Booking not found.' });
 
     if (booking.payment?.status === 'paid') {
@@ -566,16 +582,16 @@ export const getWireActionCheckoutStatus = async (req, res) => {
       });
     }
 
-    const intent = await retrievePaymentIntent(req.params.paymentIntentId, {
+    const intent = await retrievePaymentIntent(paymentIntentId, {
       wireAmount: toWireMntAmount(booking.totalPrice),
     });
 
     if (intent.status === 'succeeded') {
-      await verifyPaidIntentForBooking({ paymentIntentId: req.params.paymentIntentId, booking, intent });
+      await verifyPaidIntentForBooking({ paymentIntentId, booking, intent });
       await markBookingPaidAndNotify({
         bookingId: booking._id,
         paymentMethod: 'wire',
-        transactionId: req.params.paymentIntentId,
+        transactionId: paymentIntentId,
         awaitEmail: false,
       });
       return res.json({

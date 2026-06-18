@@ -1,7 +1,6 @@
 const WIRE_BASE_URL = process.env.WIRE_API_BASE_URL || 'https://api.wire.mn/v1';
 const WIRE_API_TIMEOUT_MS = Number(process.env.WIRE_API_TIMEOUT_MS || 10000);
 const sandboxIntents = new Map();
-const actionPages = new Map();
 
 const getApiKey = () => process.env.WIRE_API_KEY;
 const isTruthy = (value) => ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
@@ -163,12 +162,10 @@ const getSandboxCheckoutUrl = (paymentIntentId) => (
   `${getPublicApiUrl()}/api/wire/sandbox/checkout/${paymentIntentId}`
 );
 
-// ЗАСВАРЛАГДСАН ХЭСЭГ: ХААН Банкинд зориулж дундах '-' (зураас)-ыг устгав
 export const getPaymentReference = (bookingId) => (
-  `KDT${String(bookingId || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase()}`
+  `KDT-${String(bookingId || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase()}`
 );
 
-// ЗАСВАРЛАГДСАН ХЭСЭГ: Банкны аппликейшнүүдэд утгыг харуулах талбаруудыг хүчээр нэмж өгөв
 const getPaymentReferenceFields = (bookingId, suffix = '') => {
   const transactionReference = getPaymentReference(bookingId) + suffix;
   return {
@@ -183,16 +180,12 @@ const getPaymentReferenceFields = (bookingId, suffix = '') => {
     transaction_reference: transactionReference,
     transaction_description: transactionReference,
     statement_descriptor: transactionReference,
-    invoice_id: transactionReference,       // Олон системийн үндсэн инвойс талбар
-    client_reference: transactionReference, // Клиент лавлах талбар
-    utga: transactionReference,             // Монгол банкны аппуудын таньдаг талбар
     metadata: {
       booking_id: String(bookingId),
       reference: transactionReference,
       payment_reference: transactionReference,
       transaction_reference: transactionReference,
       description: transactionReference,
-      invoice_id: transactionReference,
     },
   };
 };
@@ -226,9 +219,8 @@ const withReferenceQueryParams = (url, transactionReference) => {
   }
 };
 
-// ЗАСВАРЛАГДСАН ХЭСЭГ: Зураасгүй болсон тул startsWith('KDT') шалгуурыг засав
 export const enrichPaymentActionReferences = (value, bookingId) => {
-  const transactionReference = String(bookingId || '').startsWith('KDT')
+  const transactionReference = String(bookingId || '').startsWith('KDT-')
     ? String(bookingId)
     : getPaymentReference(bookingId);
   if (!value || !transactionReference) return value;
@@ -281,25 +273,6 @@ export const getWireActionPageUrl = (paymentIntentId) => (
   `${getPublicApiUrl()}/api/wire/checkout/action/${encodeURIComponent(paymentIntentId)}`
 );
 
-export const storeWireActionPage = ({ paymentIntentId, bookingId, amount, nextAction }) => {
-  actionPages.set(String(paymentIntentId), {
-    bookingId,
-    amount,
-    nextAction,
-    expiresAt: Date.now() + 15 * 60 * 1000,
-  });
-};
-
-export const getWireActionPage = (paymentIntentId) => {
-  const page = actionPages.get(String(paymentIntentId));
-  if (!page) return null;
-  if (Date.now() > page.expiresAt) {
-    actionPages.delete(String(paymentIntentId));
-    return null;
-  }
-  return page;
-};
-
 const createLocalSandboxPaymentIntent = ({ bookingId, wireAmount, allowedOperators }) => {
   const id = `pi_test_${bookingId}`;
   const intent = {
@@ -323,7 +296,6 @@ const createLocalSandboxPaymentIntent = ({ bookingId, wireAmount, allowedOperato
   return intent;
 };
 
-// ЗАСВАРЛАГДСАН ХЭСЭГ: Давхардлаас сэргийлж залгах suffix тоонуудын урд талын '-' зураасыг устгав
 export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperators }) => {
   if (isLocalWireSandbox()) {
     return createLocalSandboxPaymentIntent({ bookingId, wireAmount, allowedOperators });
@@ -337,46 +309,45 @@ export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperat
 
   assertLiveOperators(finalOperators);
 
-  const attemptCreate = async (suffix) => {
-    const referenceFields = getPaymentReferenceFields(bookingId, suffix);
-    const payload = {
-      amount: wireAmount,
-      currency: 'MNT',
-      automatic_operator: shouldUseAutomaticOperator(finalOperators),
-      allowed_operators: finalOperators.length ? finalOperators : undefined,
-      ...referenceFields,
-    };
+  const referenceFields = getPaymentReferenceFields(bookingId);
+  const payload = {
+    amount: wireAmount,
+    currency: 'MNT',
+    automatic_operator: shouldUseAutomaticOperator(finalOperators),
+    allowed_operators: finalOperators.length ? finalOperators : undefined,
+    ...referenceFields,
+  };
 
-    try {
+  try {
+    return await wireRequest('/payment_intents', {
+      payload,
+      idempotencyKey: `wire-pi-${bookingId}-${wireAmount}`,
+    });
+  } catch (err) {
+    const isDuplicate = /duplicate|давхар|double|already|exists|гүйлгээ/i.test(err.message || '') || /duplicate|давхар|double|already|exists|гүйлгээ/i.test(JSON.stringify(err.details || {}));
+    if (isDuplicate) {
+      console.warn(`[Wire] Duplicate error on create, retrying with stable fallback...`);
+      const suffix = `-${Math.floor(1000 + Math.random() * 9000)}`;
       return await wireRequest('/payment_intents', {
         payload,
         idempotencyKey: `wire-pi-${bookingId}-${wireAmount}${suffix}`,
       });
-    } catch (err) {
-      const isDuplicate = /duplicate|давхар|double|already|exists|гүйлгээ/i.test(err.message || '') || /duplicate|давхар|double|already|exists|гүйлгээ/i.test(JSON.stringify(err.details || {}));
-      if (isDuplicate && !suffix) {
-        console.warn(`[Wire] Duplicate error on create, retrying with suffix...`, err.message);
-        return attemptCreate(`${Math.floor(Math.random() * 10000)}`);
-      }
-      
-      if (!isPayloadFieldError(err)) throw err;
-      console.warn('[Wire] Reference autofill fields were rejected on create; retrying with basic description/metadata.', err.message);
-      return wireRequest('/payment_intents', {
-        payload: {
-          amount: wireAmount,
-          currency: 'MNT',
-          automatic_operator: shouldUseAutomaticOperator(finalOperators),
-          allowed_operators: finalOperators.length ? finalOperators : undefined,
-          description: referenceFields.description,
-          metadata: referenceFields.metadata,
-        },
-        idempotencyKey: `wire-pi-basic-${bookingId}-${wireAmount}${suffix}`,
-      });
     }
-  };
-
-  const randomSuffix = `${Math.floor(1000 + Math.random() * 9000)}`;
-  return attemptCreate(randomSuffix);
+    
+    if (!isPayloadFieldError(err)) throw err;
+    console.warn('[Wire] Reference autofill fields were rejected on create; retrying with basic description/metadata.', err.message);
+    return wireRequest('/payment_intents', {
+      payload: {
+        amount: wireAmount,
+        currency: 'MNT',
+        automatic_operator: shouldUseAutomaticOperator(finalOperators),
+        allowed_operators: finalOperators.length ? finalOperators : undefined,
+        description: referenceFields.description,
+        metadata: referenceFields.metadata,
+      },
+      idempotencyKey: `wire-pi-basic-${bookingId}-${wireAmount}`,
+    });
+  }
 };
 
 const isActionUrl = (value) => /^[a-z][a-z0-9+.-]*:\/\//i.test(value || '');
@@ -445,14 +416,7 @@ export const retrievePaymentIntent = async (paymentIntentId, fallback = {}) => {
 
 export const extractActionUrl = (intent) => {
   if (!intent) return null;
-  
-  if (intent.next_action?.url) {
-    return intent.next_action.url;
-  }
-  
-  if (intent.url) {
-    return intent.url;
-  }
-  
+  if (intent.next_action?.url) return intent.next_action.url;
+  if (intent.url) return intent.url;
   return null;
 };
