@@ -131,8 +131,10 @@ const buildQrImageUrl = (value) => `https://api.qrserver.com/v1/create-qr-code/?
 const formatTicketType = (type) => (type === 'child' ? 'Хүүхэд' : 'Том хүн');
 const formatMoney = (value) => `${Number(value || 0).toLocaleString('mn-MN')}₮`;
 
+const THEATER_UTC_OFFSET = '+07:00';
+
 const buildGoogleCalendarUrl = ({ movieTitle, date, time, hall, orderId }) => {
-  const start = new Date(`${date}T${time || '00:00'}:00+08:00`);
+  const start = new Date(`${date}T${time || '00:00'}:00${THEATER_UTC_OFFSET}`);
   const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
   const toGoogleDate = (value) => value.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
   const params = new URLSearchParams({
@@ -149,6 +151,10 @@ export const sendBookingConfirmation = async ({
   to, orderId, movieTitle, date, time, hall,
   seats, tickets, totalPrice, customer,
 }) => {
+  if (process.env.NODE_ENV === 'test') {
+    return { success: true, test: true, messageId: `test-${orderId}` };
+  }
+
   const USER = process.env.GMAIL_USER || process.env.EMAIL_USER || process.env.SMTP_USER;
   const RAW_PASS = process.env.GMAIL_APP_PASS || process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASS;
   const PASS = RAW_PASS?.replace(/\s/g, '');
@@ -165,24 +171,25 @@ export const sendBookingConfirmation = async ({
   const seatList = Array.isArray(seats) ? seats.join(', ') : seats;
   const ticketItems = (tickets?.length ? tickets : (seats || []).map((seatId) => ({ seatId, type: 'adult' })));
 
-  // 🔮 Glassmorphism стилийн туслах функц
-  const glassStyle = (opacity = 0.15, blur = '12px') => 
-    `background: rgba(255, 255, 255, ${opacity}); backdrop-filter: blur(${blur}); -webkit-backdrop-filter: blur(${blur}); border: 1px solid rgba(255, 255, 255, 0.18); box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.08);`;
+  const panelStyle = 'background:#ffffff;border:1px solid #e5e7eb;border-radius:20px;box-shadow:0 14px 38px rgba(15,23,42,0.08);';
+  const softPanelStyle = 'background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;';
+  const labelStyle = 'font-size:11px;line-height:15px;color:#64748b;font-weight:800;letter-spacing:.08em;text-transform:uppercase;';
+  const valueStyle = 'font-size:18px;line-height:24px;color:#0f172a;font-weight:900;';
 
   const ticketRows = ticketItems.map((ticket) => `
     <tr>
-      <td style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.1);color:#1e293b;font-weight:700;font-size:15px;">
-        <span style="display:inline-block;margin-right:8px;">🎟️</span>${escapeHtml(ticket.seatId)}
+      <td style="padding:12px 0;border-bottom:1px solid #e2e8f0;color:#0f172a;font-weight:800;font-size:15px;line-height:21px;">
+        ${escapeHtml(ticket.seatId)}
       </td>
-      <td style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.1);color:#64748b;text-align:right;font-size:14px;">
+      <td style="padding:12px 0;border-bottom:1px solid #e2e8f0;color:#475569;text-align:right;font-size:14px;line-height:20px;">
         ${formatTicketType(ticket.type)}
       </td>
     </tr>
   `).join('');
 
   const simpleSeatBadges = ticketItems.map((ticket) => (
-    `<span style="display:inline-block;margin:0 8px 10px 0;padding:10px 16px;border-radius:14px;${glassStyle(0.2, '10px')};color:#1e293b;font-size:14px;font-weight:600;">
-      <span style="margin-right:6px;">💺</span>${escapeHtml(ticket.seatId)} <span style="color:#64748b;font-weight:500;">· ${formatTicketType(ticket.type)}</span>
+    `<span style="display:inline-block;margin:0 8px 10px 0;padding:9px 13px;border-radius:999px;background:#eef2ff;border:1px solid #c7d2fe;color:#312e81;font-size:14px;line-height:18px;font-weight:800;">
+      ${escapeHtml(ticket.seatId)} <span style="color:#64748b;font-weight:700;">· ${formatTicketType(ticket.type)}</span>
     </span>`
   )).join('');
 
@@ -201,170 +208,126 @@ export const sendBookingConfirmation = async ({
   <meta name="color-scheme" content="light">
   <meta name="supported-color-schemes" content="light">
   <title>Тасалбар</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    @media screen and (max-width:560px) {
+      .container { width:100% !important; }
+      .mobile-pad { padding-left:18px !important; padding-right:18px !important; }
+      .stack { display:block !important; width:100% !important; box-sizing:border-box !important; }
+      .stack-gap { padding-top:12px !important; }
+      .button { display:block !important; width:100% !important; box-sizing:border-box !important; text-align:center !important; }
+      .qr-img { width:220px !important; height:220px !important; }
+    }
+  </style>
 </head>
-<body style="margin:0;padding:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#1e293b !important;background:linear-gradient(135deg,#f0f4ff 0%,#e8f0fe 25%,#fce7f3 50%,#f0f9ff 75%,#f3e8ff 100%);background-attachment:fixed;">
-  <div style="display:none;max-height:0;overflow:hidden;">🎬 Таны тасалбар баталгаажлаа. Үүдэнд QR кодоо уншуулна уу.</div>
-  
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+<body bgcolor="#f1f5f9" style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#0f172a;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">Таны төлбөр баталгаажлаа. Үүдэнд QR кодоо уншуулна уу.</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" bgcolor="#f1f5f9" style="border-collapse:collapse;background:#f1f5f9;">
     <tr>
-      <td align="center" style="padding:32px 16px;">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:580px;border-collapse:separate;border-spacing:0;">
-          
-          <!-- 🌟 Header -->
+      <td align="center" class="mobile-pad" style="padding:28px 14px;">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" class="container" style="width:600px;max-width:600px;border-collapse:separate;border-spacing:0;">
           <tr>
-            <td style="padding:0 0 20px;text-align:center;">
-              <div style="display:inline-block;padding:10px 20px;border-radius:50px;${glassStyle(0.2, '14px')};">
-                <span style="font-size:28px;vertical-align:middle;margin-right:8px;">✨</span>
-                <span style="font-size:13px;font-weight:700;color:#7c3aed;letter-spacing:.1em;vertical-align:middle;">ТӨЛБӨР БАТАЛГААЖЛАА</span>
-                <span style="font-size:28px;vertical-align:middle;margin-left:8px;">✨</span>
-              </div>
+            <td style="padding:0 0 12px;text-align:left;">
+              <span style="display:inline-block;padding:8px 12px;border-radius:999px;background:#dcfce7;color:#166534;font-size:12px;line-height:16px;font-weight:900;letter-spacing:.04em;">ТӨЛБӨР БАТАЛГААЖЛАА</span>
             </td>
           </tr>
-          
-          <!-- 🎞️ Movie Title Card -->
           <tr>
-            <td style="padding:0 0 24px;text-align:center;">
-              <div style="display:inline-block;padding:28px 24px;border-radius:28px;${glassStyle(0.15, '16px')};text-align:center;">
-                <div style="font-size:48px;margin-bottom:8px;">🎬</div>
-                <h1 style="margin:0 0 8px;font-size:28px;font-weight:900;color:#1e293b !important;line-height:1.2;">${escapeHtml(movieTitle)}</h1>
-                <p style="margin:0;font-size:15px;color:#64748b !important;line-height:1.5;">Сайн байна уу, <strong style="color:#7c3aed !important;">${escapeHtml(customer?.name || 'үзэгч')}</strong>!<br/>Доорх QR кодыг үүдэнд уншуулна уу 🎟️</p>
-              </div>
-            </td>
-          </tr>
-
-          <!-- 🎫 Main Ticket Card -->
-          <tr>
-            <td style="border-radius:30px;overflow:hidden;${glassStyle(0.12, '16px')};">
+            <td style="${panelStyle}overflow:hidden;">
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
-                
-                <!-- Colorful Top Bar -->
                 <tr>
-                  <td style="height:6px;background:linear-gradient(90deg,#7c3aed,#a855f7,#ec4899,#f43f5e,#f59e0b,#3b82f6);font-size:0;line-height:0;">&nbsp;</td>
+                  <td style="background:#111827;padding:26px 28px 24px;">
+                    <div style="font-size:13px;line-height:18px;color:#c4b5fd;font-weight:900;letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;">E-TICKET</div>
+                    <h1 style="margin:0 0 10px;font-size:28px;line-height:34px;color:#ffffff;font-weight:900;">${escapeHtml(movieTitle)}</h1>
+                    <p style="margin:0;font-size:15px;line-height:23px;color:#cbd5e1;">Сайн байна уу, <strong style="color:#ffffff;">${escapeHtml(customer?.name || 'Үзэгч')}</strong>. Доорх QR кодыг театрын үүдэнд уншуулна уу.</p>
+                  </td>
                 </tr>
-                
-                <!-- Main Content -->
                 <tr>
-                  <td style="padding:28px 28px 22px;">
-                    
-                    <!-- Badge -->
-                    <div style="margin-bottom:14px;">
-                      <span style="display:inline-block;padding:6px 14px;border-radius:20px;${glassStyle(0.25, '8px')};font-size:11px;font-weight:800;letter-spacing:.16em;color:#7c3aed;">
-                        🎟️ E-TICKET
-                      </span>
-                    </div>
-                    
-                    <div style="font-size:13px;color:#64748b;font-weight:500;margin-bottom:20px;">
-                      📍 Ховд аймаг Хөгжимт Драмын Театр
-                    </div>
-
-                    <!-- Date & Time Row -->
-                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-bottom:16px;">
-                      <tr>
-                        <td style="width:50%;padding:16px;border-radius:18px 0 0 18px;${glassStyle(0.18, '10px')};border-right:0;">
-                          <div style="font-size:11px;color:#64748b !important;font-weight:700;letter-spacing:.1em;margin-bottom:6px;">📅 ОГНОО</div>
-                          <div style="font-size:18px;color:#1e293b !important;font-weight:800;">${escapeHtml(date)}</div>
-                        </td>
-                        <td style="width:50%;padding:16px;border-radius:0 18px 18px 0;${glassStyle(0.18, '10px')};">
-                          <div style="font-size:11px;color:#64748b !important;font-weight:700;letter-spacing:.1em;margin-bottom:6px;">⏰ ЦАГ</div>
-                          <div style="font-size:18px;color:#1e293b !important;font-weight:800;">${escapeHtml(time)}</div>
-                        </td>
-                      </tr>
-                    </table>
-
-                    <!-- Hall & Order Row -->
-                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-bottom:20px;">
-                      <tr>
-                        <td style="width:50%;padding:16px;border-radius:18px 0 0 18px;${glassStyle(0.22, '10px')};background:linear-gradient(135deg,rgba(124,58,237,0.08),rgba(236,72,153,0.06));border-right:0;">
-                          <div style="font-size:11px;color:#64748b !important;font-weight:700;letter-spacing:.1em;margin-bottom:6px;">🏛️ ТАНХИМ</div>
-                          <div style="font-size:16px;color:#1e293b !important;font-weight:700;">${escapeHtml(hall || 'Танхим')}</div>
-                        </td>
-                        <td style="width:50%;padding:16px;border-radius:0 18px 18px 0;${glassStyle(0.15, '10px')};background:linear-gradient(135deg,rgba(59,130,246,0.06),rgba(168,85,247,0.04));">
-                          <div style="font-size:11px;color:#64748b !important;font-weight:700;letter-spacing:.1em;margin-bottom:6px;">🔢 ЗАХИАЛГА</div>
-                          <div style="font-size:14px;color:#1e293b !important;font-weight:700;word-break:break-all;">${escapeHtml(orderId)}</div>
-                        </td>
-                      </tr>
-                    </table>
-
-                    <!-- Seats Section -->
-                    <div style="font-size:12px;color:#64748b;font-weight:800;letter-spacing:.12em;margin-bottom:12px;text-transform:uppercase;">💺 Суудал</div>
-                    <div style="margin-bottom:22px;line-height:1.4;">
-                      ${simpleSeatBadges || `<span style="color:#64748b;font-size:14px;">${escapeHtml(seatList || '')}</span>`}
-                    </div>
-
-                    <!-- Total Price -->
+                  <td class="mobile-pad" style="padding:24px 28px 8px;background:#ffffff;">
                     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
                       <tr>
-                        <td style="padding:20px 22px;border-radius:22px;${glassStyle(0.2, '14px')};background:linear-gradient(135deg,rgba(124,58,237,0.1),rgba(236,72,153,0.08));">
-                          <div style="font-size:12px;color:#7c3aed !important;font-weight:800;letter-spacing:.1em;margin-bottom:6px;">💰 НИЙТ ТӨЛБӨР</div>
-                          <div style="font-size:32px;font-weight:900;color:#1e293b !important;">${formatMoney(totalPrice)}</div>
+                        <td class="stack" width="50%" style="width:50%;padding:0 6px 12px 0;">
+                          <div style="${softPanelStyle}padding:16px;">
+                            <div style="${labelStyle};margin-bottom:6px;">Огноо</div>
+                            <div style="${valueStyle}">${escapeHtml(date)}</div>
+                          </div>
+                        </td>
+                        <td class="stack stack-gap" width="50%" style="width:50%;padding:0 0 12px 6px;">
+                          <div style="${softPanelStyle}padding:16px;">
+                            <div style="${labelStyle};margin-bottom:6px;">Цаг</div>
+                            <div style="${valueStyle}">${escapeHtml(time)}</div>
+                          </div>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td class="stack" width="50%" style="width:50%;padding:0 6px 12px 0;">
+                          <div style="${softPanelStyle}padding:16px;">
+                            <div style="${labelStyle};margin-bottom:6px;">Танхим</div>
+                            <div style="font-size:16px;line-height:23px;color:#0f172a;font-weight:800;">${escapeHtml(hall || 'Танхим')}</div>
+                          </div>
+                        </td>
+                        <td class="stack stack-gap" width="50%" style="width:50%;padding:0 0 12px 6px;">
+                          <div style="${softPanelStyle}padding:16px;">
+                            <div style="${labelStyle};margin-bottom:6px;">Захиалгын дугаар</div>
+                            <div style="font-size:14px;line-height:20px;color:#0f172a;font-weight:800;word-break:break-all;">${escapeHtml(orderId)}</div>
+                          </div>
+                        </td>
+                      </tr>
+                    </table>
+                    <div style="margin:6px 0 14px;">
+                      <div style="${labelStyle};margin-bottom:10px;">Суудал</div>
+                      ${simpleSeatBadges || `<span style="color:#475569;font-size:14px;line-height:20px;">${escapeHtml(seatList || '')}</span>`}
+                    </div>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:4px 0 18px;">
+                      <tr>
+                        <td style="background:#4f46e5;border-radius:18px;padding:18px 20px;">
+                          <div style="font-size:12px;line-height:16px;color:#c7d2fe;font-weight:900;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">Нийт төлбөр</div>
+                          <div style="font-size:30px;line-height:36px;color:#ffffff;font-weight:900;">${formatMoney(totalPrice)}</div>
                         </td>
                       </tr>
                     </table>
                   </td>
                 </tr>
-                
-                <!-- Dashed Divider -->
                 <tr>
-                  <td style="border-top:2px dashed rgba(124,58,237,0.2);padding:0 28px;">&nbsp;</td>
+                  <td class="mobile-pad" style="padding:22px 28px 26px;background:#f8fafc;border-top:1px dashed #cbd5e1;text-align:center;">
+                    <div style="font-size:13px;line-height:18px;color:#334155;font-weight:900;letter-spacing:.08em;text-transform:uppercase;margin-bottom:14px;">QR код</div>
+                    <a href="${qrImageUrl}" title="QR татах" style="display:inline-block;text-decoration:none;">
+                      <span style="display:inline-block;background:#ffffff;border:1px solid #cbd5e1;border-radius:22px;padding:14px;box-shadow:0 10px 26px rgba(15,23,42,0.12);">
+                        <img class="qr-img" src="${qrImageUrl}" width="230" height="230" alt="Ticket QR" style="display:block;width:230px;height:230px;border:0;border-radius:12px;"/>
+                      </span>
+                    </a>
+                    <p style="margin:16px auto 0;max-width:420px;color:#475569;font-size:14px;line-height:22px;">QR кодоо хадгалж эсвэл энэ мэйлийг нээгээд үүдэнд уншуулна уу. Мөн профайл хэсгийн <strong style="color:#312e81;">Миний тасалбарууд</strong> цэсээс харах боломжтой.</p>
+                  </td>
                 </tr>
-                
-                <!-- QR Code Section -->
                 <tr>
-                  <td style="padding:26px 28px 30px;text-align:center;">
-                    <div style="font-size:13px;color:#64748b !important;font-weight:800;letter-spacing:.1em;margin-bottom:16px;">
-                      📱 QR КОДЫГ ХАДГАЛНА УУ.
-                    </div>
-                    
-                    <!-- QR Code Container -->
-                    <div style="display:inline-block;padding:18px;border-radius:26px;${glassStyle(0.25, '16px')};">
-                      <a href="${qrImageUrl}" download="ticket_qr.png" title="QR татах">
-                        <img src="${qrImageUrl}" width="200" height="200" alt="Ticket QR" style="display:block;width:200px;height:200px;border:0;border-radius:16px;"/>
-                      </a>
-                    </div>
-                    
-                    <p style="margin:16px auto 0;max-width:380px;color:#64748b !important;font-size:13px;line-height:1.55;">
-                      Дээрх зурган дээр дарж <strong>QR татаж авна уу</strong>.<br/><br/>
-                      Мөн та <strong style="color:#7c3aed !important;">Профайл -> Миний тасалбарууд -> Дэлгэрэнгүй</strong> дарж QR харах боломжтой.
-                    </p>
-                    
-                    <!-- Action Buttons -->
-                    <div style="margin-top:24px;">
-                      <a href="${verifyUrl}" style="display:inline-block;text-decoration:none;padding:14px 24px;border-radius:16px;${glassStyle(0.3, '10px')};background:linear-gradient(135deg,#7c3aed,#a855f7);color:#ffffff;font-weight:800;font-size:14px;border:none;box-shadow:0 8px 24px rgba(124,58,237,0.25);">
-                        <span style="vertical-align:middle;">🎟️</span> <span style="vertical-align:middle;">Тасалбар нээх</span>
-                      </a>
-                      <br style="display:none;"/>
-                      <a href="${calendarUrl}" style="display:inline-block;text-decoration:none;padding:14px 24px;border-radius:16px;${glassStyle(0.2, '8px')};background:#ffffff;color:#7c3aed;font-weight:800;font-size:14px;border:1px solid rgba(124,58,237,0.2);margin-top:10px;">
-                        <span style="vertical-align:middle;">📅</span> <span style="vertical-align:middle;">Календарьт нэмэх</span>
-                      </a>
-                    </div>
+                  <td class="mobile-pad" style="padding:22px 28px 28px;background:#ffffff;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                      <tr>
+                        <td class="stack" width="50%" style="width:50%;padding:0 6px 10px 0;">
+                          <a class="button" href="${verifyUrl}" style="display:block;text-decoration:none;background:#4f46e5;color:#ffffff;border-radius:14px;padding:14px 16px;font-size:15px;line-height:20px;font-weight:900;text-align:center;">Тасалбар нээх</a>
+                        </td>
+                        <td class="stack stack-gap" width="50%" style="width:50%;padding:0 0 10px 6px;">
+                          <a class="button" href="${calendarUrl}" style="display:block;text-decoration:none;background:#ffffff;color:#312e81;border:1px solid #c7d2fe;border-radius:14px;padding:13px 16px;font-size:15px;line-height:20px;font-weight:900;text-align:center;">Календарт нэмэх</a>
+                        </td>
+                      </tr>
+                    </table>
+                    <div style="margin-top:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:16px;padding:14px 16px;color:#92400e;font-size:13px;line-height:20px;">Үзвэр эхлэхээс 10-15 минутын өмнө ирнэ үү. Тасалбар буцаах боломжгүй.</div>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-top:18px;">
+                      <tr>
+                        <td style="padding:0;">
+                          <div style="${labelStyle};margin-bottom:2px;">Тасалбарын дэлгэрэнгүй</div>
+                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                            ${ticketRows}
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
                   </td>
                 </tr>
               </table>
             </td>
           </tr>
-
-          <!-- Footer Note -->
           <tr>
-            <td style="padding:20px 8px 0;text-align:center;">
-              <div style="display:inline-block;padding:14px 22px;border-radius:18px;${glassStyle(0.1, '10px')};color:#64748b;font-size:13px;line-height:1.6;">
-                <span style="font-size:16px;margin-right:4px;">⏰</span> Үзвэр эхлэхээс 10-15 минутын өмнө ирнэ үү.<br/>
-                <span style="font-size:16px;margin-right:4px;">ℹ️</span> Тасалбар буцаах боломжгүй.
-              </div>
-            </td>
+            <td style="padding:18px 8px 0;text-align:center;color:#64748b;font-size:12px;line-height:18px;">Ховд аймаг Хөгжимт Драмын Театр</td>
           </tr>
-          
-          <!-- Brand Footer -->
-          <tr>
-            <td style="padding:28px 0 12px;text-align:center;">
-              <div style="${glassStyle(0.12, '10px')};display:inline-block;padding:14px 24px;border-radius:16px;">
-                <span style="font-size:18px;vertical-align:middle;margin-right:6px;">🎭</span>
-                <span style="font-size:14px;font-weight:700;color:#7c3aed;vertical-align:middle;">ХОВД АЙМАГ ХӨГЖИМТ ДРАМЫН ТЕАТР</span>
-                <span style="font-size:18px;vertical-align:middle;margin-left:6px;">🎭</span>
-              </div>
-            </td>
-          </tr>
-          
         </table>
       </td>
     </tr>

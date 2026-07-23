@@ -5,6 +5,22 @@ import Movie    from '../models/Movie.js';
 
 // Theater system time = Khovd, UTC+7, no DST.
 const THEATER_OFFSET_MS = 7 * 60 * 60 * 1000;
+const SCHEDULE_MOVIE_FIELDS = [
+  'title',
+  'originalTitle',
+  'posterUrl',
+  'duration',
+  'genre',
+  'rating',
+  'status',
+  'adultPrice',
+  'childPrice',
+  'description',
+  'trailerUrl',
+  'cast',
+  'releaseDate',
+  'imdb',
+].join(' ');
 
 const parseTicketPrice = (value, fallback) => {
   if (value === undefined || value === null || value === '') return fallback;
@@ -19,9 +35,9 @@ const parseTicketPrice = (value, fallback) => {
 const mongoliaDateToUTCRange = (dateStr) => {
   // Аргумент нь "2026-03-17" format
   const [y, m, d] = dateStr.split('-').map(Number);
-  // Mongolia өдрийн эхлэл: local 00:00 = UTC-8h = өмнөх өдрийн 16:00 UTC
+  // Mongolia өдрийн эхлэл: local 00:00 = UTC-7h = өмнөх өдрийн 17:00 UTC
   const start = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0) - THEATER_OFFSET_MS);
-  // Mongolia өдрийн төгсгөл: local 23:59:59 = UTC-8h
+  // Mongolia өдрийн төгсгөл: local 23:59:59 = UTC-7h
   const end   = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999) - THEATER_OFFSET_MS);
   return { start, end };
 };
@@ -44,7 +60,7 @@ export const getSchedulesByDate = async (req, res) => {
       showTime: { $gte: start, $lte: end },
     })
       .sort({ showTime: 1 })
-      .populate('movie', 'title posterUrl duration genre rating status adultPrice childPrice');
+      .populate('movie', SCHEDULE_MOVIE_FIELDS);
 
     console.log(`[Schedule] found: ${schedules.length}`);
 
@@ -71,7 +87,7 @@ export const getScheduleByMovie = async (req, res) => {
 
     const schedules = await Schedule.find(query)
       .sort({ showTime: 1 })
-      .populate('movie', 'title posterUrl duration adultPrice childPrice');
+      .populate('movie', SCHEDULE_MOVIE_FIELDS);
 
     res.json(schedules);
   } catch (error) {

@@ -8,6 +8,8 @@ import {
 } from '../services/bookingFulfillmentService.js';
 
 const THEATER_TIME_ZONE = 'Asia/Hovd';
+const ENTRY_BEFORE_MINUTES = 30;
+const ENTRY_AFTER_MINUTES = 40;
 
 const formatTheaterDateTime = (value) => {
   if (!value) return { dateISO: '', date: '', time: '' };
@@ -45,26 +47,64 @@ const getFrontendUrl = () => (
   'https://khovdteatr-web-pied.vercel.app'
 ).replace(/\/$/, '');
 
-const getTicketStatus = (booking, showTime) => {
-  if (booking.status !== 'active') {
-    return { isActive: false, label: 'Идэвхгүй', reason: booking.status === 'used' ? 'Ашигласан тасалбар' : 'Цуцлагдсан тасалбар' };
-  }
-  if (booking.payment?.status !== 'paid') {
-    return { isActive: false, label: 'Идэвхгүй', reason: 'Төлбөр баталгаажаагүй' };
-  }
-  if (showTime && showTime.getTime() < Date.now()) {
-    return { isActive: false, label: 'Идэвхгүй', reason: 'Үзвэрийн цаг өнгөрсөн' };
-  }
-  return { isActive: true, label: 'Идэвхтэй', reason: 'Нэвтрүүлэх боломжтой' };
+const getRequestFrontendUrl = (req) => {
+  const origin = String(req?.get?.('origin') || '').trim();
+  if (!origin) return getFrontendUrl();
+
+  try {
+    const parsed = new URL(origin);
+    const isLocalHost = ['localhost', '127.0.0.1', '0.0.0.0'].includes(parsed.hostname);
+    const isPrivateHost = (
+      parsed.hostname.startsWith('10.') ||
+      parsed.hostname.startsWith('192.168.') ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(parsed.hostname)
+    );
+    if (parsed.protocol === 'http:' && (
+      isLocalHost ||
+      (process.env.NODE_ENV !== 'production' && isPrivateHost)
+    )) {
+      return parsed.origin;
+    }
+  } catch {}
+
+  return getFrontendUrl();
 };
 
-const formatBookingForClient = (booking) => {
+const getTicketStatus = (booking, showTime) => {
+  if (booking.status === 'used') {
+    return { isActive: false, label: 'Ашиглагдсан', reason: 'Энэ тасалбарыг аль хэдийн уншуулсан байна.' };
+  }
+  if (booking.status === 'cancelled' || booking.status === 'expired') {
+    return { isActive: false, label: 'Ашиглах боломжгүй', reason: booking.status === 'cancelled' ? 'Цуцлагдсан тасалбар.' : 'Нэвтрэх хугацаа дууссан.' };
+  }
+  if (booking.payment?.status !== 'paid') {
+    return { isActive: false, label: 'Төлбөр хүлээгдэж байна', reason: 'Төлбөр баталгаажаагүй.' };
+  }
+  if (!showTime || Number.isNaN(showTime.getTime())) {
+    return { isActive: false, label: 'Ашиглах боломжгүй', reason: 'Үзвэрийн цагийн мэдээлэл дутуу байна.' };
+  }
+
+  const now = Date.now();
+  const opensAt = showTime.getTime() - ENTRY_BEFORE_MINUTES * 60 * 1000;
+  const closesAt = showTime.getTime() + ENTRY_AFTER_MINUTES * 60 * 1000;
+
+  if (now < opensAt) {
+    return { isActive: false, label: 'Нэвтрэх хугацаа болоогүй', reason: 'Үзвэр эхлэхээс 30 минутын өмнө QR тасалбар нээгдэнэ.' };
+  }
+  if (now > closesAt) {
+    return { isActive: false, label: 'Ашиглах боломжгүй', reason: 'Үзвэр эхэлснээс хойш 40 минут өнгөрсөн тул нэвтрэх хугацаа дууссан.' };
+  }
+
+  return { isActive: true, label: 'Ашиглах боломжтой', reason: 'QR тасалбар нэвтрүүлэх боломжтой.' };
+};
+
+const formatBookingForClient = (booking, frontendUrl = getFrontendUrl()) => {
   const movie = getPopulatedMovie(booking);
   const showTime = booking.schedule?.showTime ? new Date(booking.schedule.showTime) : null;
   const showDateTime = formatTheaterDateTime(showTime);
   const bookingCode = String(booking._id);
   const ticketStatus = getTicketStatus(booking, showTime);
-  const verifyUrl = `${getFrontendUrl()}/ticket-verify/${bookingCode}`;
+  const verifyUrl = `${frontendUrl}/ticket-verify/${bookingCode}`;
 
   const formatted = {
     id:            booking._id,
@@ -104,7 +144,7 @@ const formatBookingForClient = (booking) => {
 const queueMissingPaidEmail = (booking, source) => {
   if (booking?.customer?.email === 'cashier@khovdteatr.mn') return;
   
-  if (booking?.payment?.status === 'paid' && !booking.ticketEmailSentAt) {
+  if (booking?.payment?.status === 'paid' && !booking.ticketEmailSentAt && !booking.ticketEmailSuppressedAt) {
     ensurePaidBookingEmailQueued(booking._id, source);
   }
 };
@@ -114,14 +154,18 @@ const markExpiredActiveBookings = async () => {
   const deleteAfter = new Date(now.getTime() + 24 * 60 * 60 * 1000);
   const activeBookings = await Booking.find({ status: 'active' }).populate('schedule', 'showTime');
   const expiredIds = activeBookings
-    .filter((booking) => booking.schedule?.showTime && new Date(booking.schedule.showTime) < now)
+    .filter((booking) => {
+      if (!booking.schedule?.showTime) return false;
+      const closesAt = new Date(booking.schedule.showTime).getTime() + ENTRY_AFTER_MINUTES * 60 * 1000;
+      return closesAt < now.getTime();
+    })
     .map((booking) => booking._id);
 
   if (!expiredIds.length) return 0;
 
   const result = await Booking.updateMany(
     { _id: { $in: expiredIds } },
-    { $set: { status: 'used', expiredAt: deleteAfter } }
+    { $set: { status: 'expired', expiredAt: deleteAfter } }
   );
 
   return result.modifiedCount || 0;
@@ -170,13 +214,24 @@ const getSchedulePrices = (schedule) => ({
 // @desc  Шинэ захиалга үүсгэх
 // @route POST /api/bookings
 export const createBooking = async (req, res) => {
-  console.log('📦 Booking payload:', JSON.stringify(req.body, null, 2));
-
-  const { scheduleId, movieId, date, time, seats, totalPrice, customer, paymentMethod = 'wire' } = req.body;
+  const { scheduleId, movieId, date, time, seats, customer, paymentMethod = 'wire' } = req.body;
   let resolvedScheduleId = null;
   let selectedSeats = [];
 
   try {
+    const normalizedPaymentMethod = String(paymentMethod || '').trim().toLowerCase();
+    const isStaff = ['cashier', 'admin'].includes(req.user?.role);
+    const isCashSale = normalizedPaymentMethod === 'cash';
+
+    if (!['wire', 'cash'].includes(normalizedPaymentMethod)) {
+      return res.status(400).json({ message: 'Төлбөрийн төрөл буруу байна.' });
+    }
+    if (isCashSale && !isStaff) {
+      return res.status(403).json({
+        message: 'Бэлэн мөнгөний төлбөр баталгаажуулах эрхгүй байна.',
+      });
+    }
+
     resolvedScheduleId = await resolveScheduleId(scheduleId, movieId, date, time);
 
     // Validation
@@ -201,7 +256,9 @@ export const createBooking = async (req, res) => {
       return res.status(404).json({ message: 'Цагийн хуваарь олдсонгүй.' });
     }
 
-    const isCashier = req.body.isCashier === true || customer?.email === 'cashier@khovdteatr.mn';
+    // Cash bookings become paid only when the authenticated user is cashier/admin.
+    // Client-controlled flags and customer email are never used as authorization.
+    const isCashier = isCashSale && isStaff;
     
     // Суудлыг атомик байдлаар нөөцлөх
     const showTimeMs = schedule.showTime ? new Date(schedule.showTime).getTime() : 0;
@@ -243,7 +300,7 @@ export const createBooking = async (req, res) => {
     });
     const computedTotalPrice = ticketDetails.reduce((sum, ticket) => sum + ticket.price, 0);
 
-    const resolvedPaymentStatus = isCashier ? 'paid' : ((paymentMethod === 'wire' || paymentMethod === 'cash') ? 'pending' : 'paid');
+    const resolvedPaymentStatus = isCashier ? 'paid' : 'pending';
 
     // Booking үүсгэх
     const booking = await new Booking({
@@ -256,9 +313,11 @@ export const createBooking = async (req, res) => {
       totalPrice: computedTotalPrice,
       status:     'active',
       payment: {
-        method:        paymentMethod,
-        transactionId: `TRX-${Date.now()}`,
+        method:        normalizedPaymentMethod,
+        transactionId: isCashier ? `CASH-${Date.now()}-${req.user._id}` : null,
         status:        resolvedPaymentStatus,
+        receivedBy:    isCashier ? req.user._id : null,
+        receivedAt:    isCashier ? new Date() : null,
       },
       expiredAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     }).save();
@@ -287,48 +346,6 @@ export const createBooking = async (req, res) => {
   }
 };
 
-// @desc  External төлбөр амжилттай болсны дараа booking баталгаажуулах
-// @route POST /api/bookings/:id/confirm
-export const confirmBooking = async (req, res) => {
-  try {
-    const booking = await Booking.findById(req.params.id)
-      .populate('movie', 'title posterUrl')
-      .populate({
-        path: 'schedule',
-        select: 'showTime hall movie',
-        populate: { path: 'movie', select: 'title posterUrl' },
-      });
-    if (!booking) return res.status(404).json({ message: 'Захиалга олдсонгүй' });
-
-    if (!booking.schedule?.showTime || new Date(booking.schedule.showTime).getTime() <= Date.now()) {
-      booking.payment.status = 'cancelled';
-      booking.status = 'cancelled';
-      await booking.save();
-
-      if (booking.schedule && booking.seats?.length) {
-        await Schedule.findByIdAndUpdate(booking.schedule._id, {
-          $pull: { soldSeats: { $in: booking.seats } },
-        });
-      }
-
-      return res.status(400).json({
-        success: false,
-        message: 'Энэ үзвэрийн цаг өнгөрсөн тул тасалбар баталгаажуулах боломжгүй.',
-      });
-    }
-
-    const fulfilled = await markBookingPaidAndNotify({
-      bookingId: booking._id,
-      paymentMethod: req.body?.paymentMethod || booking.payment?.method || 'wire',
-      transactionId: req.body?.transactionId || booking.payment?.transactionId,
-    });
-
-    return res.json({ success: true, booking: fulfilled.booking, email: fulfilled.emailResult });
-  } catch (err) {
-    return res.status(500).json({ message: 'Алдаа гарлаа', error: err.message });
-  }
-};
-
 // @desc  Захиалгын дэлгэрэнгүй
 // @route GET /api/bookings/:bookingId
 export const getBookingDetails = async (req, res) => {
@@ -350,7 +367,7 @@ export const getBookingDetails = async (req, res) => {
 
     queueMissingPaidEmail(booking, 'get_booking_details');
 
-    return res.json({ success: true, booking: formatBookingForClient(booking) });
+    return res.json({ success: true, booking: formatBookingForClient(booking, getRequestFrontendUrl(req)) });
   } catch (err) {
     return res.status(500).json({ message: 'Захиалгын мэдээлэл авах алдаа.', error: err.message });
   }
@@ -370,19 +387,26 @@ export const verifyBookingStatus = async (req, res) => {
       return res.status(404).json({
         success: false,
         isActive: false,
-        label: 'Идэвхгүй',
+        label: 'Ашиглах боломжгүй',
         reason: 'Тасалбар олдсонгүй',
       });
     }
 
-    const formatted = formatBookingForClient(booking);
+    const formatted = formatBookingForClient(booking, getRequestFrontendUrl(req));
+    const {
+      customerName: _customerName,
+      customerEmail: _customerEmail,
+      customerPhone: _customerPhone,
+      transactionId: _transactionId,
+      ...publicBooking
+    } = formatted;
     queueMissingPaidEmail(booking, 'verify_booking_status');
     return res.json({
       success: true,
       isActive: formatted.ticketStatus.isActive,
       label: formatted.ticketStatus.label,
       reason: formatted.ticketStatus.reason,
-      booking: formatted,
+      booking: publicBooking,
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Тасалбар шалгахад алдаа гарлаа', error: err.message });
@@ -455,8 +479,27 @@ export const cancelBooking = async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.id);
     if (!booking) return res.status(404).json({ message: 'Захиалга олдсонгүй.' });
+
+    const isOwner = booking.userId && req.user?._id && String(booking.userId) === String(req.user._id);
+    const isAdmin = req.user?.role === 'admin';
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Энэ захиалгыг цуцлах эрхгүй байна.',
+      });
+    }
     if (booking.status === 'cancelled') {
-      return res.status(400).json({ message: 'Захиалга аль хэдийн цуцлагдсан байна.' });
+      return res.status(409).json({ message: 'Захиалга аль хэдийн цуцлагдсан байна.' });
+    }
+    if (booking.status === 'used') {
+      return res.status(409).json({ message: 'Ашиглагдсан тасалбарыг цуцлах боломжгүй.' });
+    }
+    if (booking.payment?.status === 'paid' && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Төлөгдсөн тасалбарыг зөвхөн админ цуцална.',
+      });
     }
 
     if (booking.schedule && booking.seats?.length) {
@@ -471,6 +514,11 @@ export const cancelBooking = async (req, res) => {
     }
 
     booking.status = 'cancelled';
+    booking.cancellation = {
+      cancelledBy: req.user._id,
+      cancelledAt: new Date(),
+      reason: String(req.body?.reason || '').trim(),
+    };
     await booking.save();
 
     return res.json({ success: true, message: 'Захиалга амжилттай цуцлагдлаа.' });
@@ -575,7 +623,7 @@ export const resendBookingConfirmation = async (req, res) => {
     }
 
     booking.ticketEmailSentAt = null;
-    const result = await sendPaidBookingEmail(booking);
+    const result = await sendPaidBookingEmail(booking, { force: true });
 
     return res.json({ success: Boolean(result?.success), email: result });
   } catch (err) {

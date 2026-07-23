@@ -8,11 +8,9 @@ import {
   getMyHistory, 
   verifyBookingStatus,
   cancelBooking,
-  confirmBooking,
   hideBookingForMe,
   resendBookingConfirmation
 } from '../controllers/bookingController.js';
-import { sendBookingConfirmation } from '../services/Emailservice.js';
 import { protect, admin } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
@@ -20,31 +18,13 @@ const router = express.Router();
 // ✅ Тогтмол route-ууд ЭХЭЛЖ — /:id-аас өмнө заавал байх ёстой
 router.get('/verify/:bookingId', verifyBookingStatus);
 router.get('/my-history', protect, getMyHistory); 
-router.get   ('/stats',          protect, getBookingStats);
-router.get   ('/',               protect, getAllBookings);
+router.get   ('/stats',          protect, admin, getBookingStats);
+router.get   ('/',               protect, admin, getAllBookings);
 router.post  ('/',               protect, createBooking);
-router.post  ('/:id/confirm',    protect, confirmBooking);
 router.post  ('/:id/resend-confirmation', protect, resendBookingConfirmation);
 router.post  ('/:id/cancel',     protect, cancelBooking);
 router.delete('/:id/my-history',  protect, hideBookingForMe);
 // ✅ Dynamic route-ууд ХАМГИЙН СҮҮЛД
 router.get   ('/:bookingId',     protect, getBookingDetails);
-
-// Email дахин илгээх
-router.post('/send-confirmation', async (req, res) => {
-  try {
-    const { to, orderId, movieTitle, moviePoster, date, time, hall, seats, tickets, totalPrice, customer } = req.body;
-    if (!to || !orderId || !movieTitle)
-      return res.status(400).json({ success: false, message: 'to, orderId, movieTitle заавал шаардлагатай' });
-
-    const result = await sendBookingConfirmation({ to, orderId, movieTitle, moviePoster, date, time, hall, seats, tickets, totalPrice, customer });
-
-    if (result.success)               return res.json({ success: true, messageId: result.messageId });
-    if (result.reason === 'not_configured') return res.json({ success: false, message: '.env тохируулаагүй' });
-    return res.status(500).json({ success: false, message: result.error });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
-  }
-});
 
 export default router;

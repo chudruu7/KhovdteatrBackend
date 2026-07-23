@@ -3,6 +3,7 @@ import Schedule from '../models/Schedule.js';
 import CleanupRequest from '../models/CleanupRequest.js';
 
 const DAYS_THRESHOLD = 14;
+const ENTRY_AFTER_MINUTES = 40;
 
 /* ─── Автомат: Expired тасалбар 1 хоногийн дараа устгана ─────────────── */
 export const autoCleanupExpiredTickets = async () => {
@@ -15,24 +16,30 @@ export const autoCleanupExpiredTickets = async () => {
       .populate('schedule', 'showTime');
 
     const expiredIds = activeBookings
-      .filter(b => b.schedule?.showTime && new Date(b.schedule.showTime) < now)
+      .filter((b) => {
+        if (!b.schedule?.showTime) return false;
+        const closesAt = new Date(b.schedule.showTime).getTime() + ENTRY_AFTER_MINUTES * 60 * 1000;
+        return closesAt < now.getTime();
+      })
       .map(b => b._id);
 
     let updatedCount = 0;
     if (expiredIds.length > 0) {
       const updated = await Booking.updateMany(
         { _id: { $in: expiredIds } },
-        { $set: { status: 'used', expiredAt: deleteAfter } }
+        { $set: { status: 'expired', expiredAt: deleteAfter } }
       );
       updatedCount = updated.modifiedCount;
-      console.log(`[Cleanup] ${updatedCount} тасалбар used болгогдлоо`);
+      console.log(`[Cleanup] ${updatedCount} тасалбар expired болгогдлоо`);
     }
 
-    // 1 хоногоос өмнө used болсон тасалбаруудыг устгана
+    // 1 хоногоос өмнө used/expired болсон тасалбаруудыг устгана
     const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const deleted = await Booking.deleteMany({
-      status: 'used',
-      expiredAt: { $lt: oneDayAgo }
+      $or: [
+        { status: 'expired', expiredAt: { $lte: now } },
+        { status: 'used', updatedAt: { $lte: oneDayAgo } },
+      ],
     });
     if (deleted.deletedCount > 0)
       console.log(`[Cleanup] ${deleted.deletedCount} тасалбар устгагдлаа`);

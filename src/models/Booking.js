@@ -37,13 +37,9 @@ const bookingSchema = new mongoose.Schema({
     type: Number,
     required: true,
   },
-  totalPrice: {
-    type: Number,
-    required: true,
-  },
   status: {
     type: String,
-    enum: ['active', 'used', 'cancelled'],
+    enum: ['active', 'used', 'cancelled', 'expired'],
     default: 'active',
   },
   payment: {
@@ -52,6 +48,8 @@ const bookingSchema = new mongoose.Schema({
       required: true,
     },
     transactionId: { type: String, default: null },
+    receivedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    receivedAt: { type: Date, default: null },
     status: {
       type: String,
       enum: ['pending', 'paid', 'failed', 'cancelled'],
@@ -61,6 +59,24 @@ const bookingSchema = new mongoose.Schema({
   ticketEmailSentAt: {
     type: Date,
     default: null,
+  },
+  ticketEmailSuppressedAt: {
+    type: Date,
+    default: null,
+  },
+  rewardPointsAwardedAt: {
+    type: Date,
+    default: null,
+  },
+  rewardPointsAwarded: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  cancellation: {
+    cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    cancelledAt: { type: Date, default: null },
+    reason: { type: String, default: '' },
   },
   hiddenForUsers: [{
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },

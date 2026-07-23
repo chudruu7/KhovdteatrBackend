@@ -16,6 +16,10 @@ const userSchema = new mongoose.Schema({
     enum: ['user', 'admin', 'cashier'],
     default: 'user'
   },
+  socialAccounts: [{
+    provider: { type: String, enum: ['google'], required: true },
+    providerId: { type: String, required: true },
+  }],
   phone: { type: String },
  address: { type: String },
   avatarUrl: {

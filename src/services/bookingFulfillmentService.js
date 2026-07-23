@@ -1,4 +1,5 @@
 import Booking from '../models/Booking.js';
+import User from '../models/User.js';
 import { sendBookingConfirmation } from './Emailservice.js';
 
 const THEATER_TIME_ZONE = 'Asia/Hovd';
@@ -27,34 +28,98 @@ const formatTheaterDateTime = (value) => {
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const queuedEmailBookingIds = new Set();
 
+export const awardPaidBookingPoints = async (bookingOrId) => {
+  const bookingId = bookingOrId?._id || bookingOrId;
+  if (!bookingId) return { awarded: false, points: 0, reason: 'missing_booking' };
+
+  const booking = await Booking.findById(bookingId)
+    .select('userId seats tickets status payment.status rewardPointsAwardedAt');
+
+  if (!booking) return { awarded: false, points: 0, reason: 'missing_booking' };
+  if (booking.payment?.status !== 'paid' || !['active', 'used'].includes(booking.status)) {
+    return { awarded: false, points: 0, reason: 'booking_not_paid' };
+  }
+  if (booking.rewardPointsAwardedAt) {
+    return { awarded: false, points: 0, reason: 'already_awarded' };
+  }
+
+  const userId = booking.userId?._id || booking.userId;
+  const user = userId ? await User.findOne({ _id: userId, role: 'user' }).select('_id') : null;
+  if (!user) return { awarded: false, points: 0, reason: 'not_customer_account' };
+
+  const points = booking.seats?.length || booking.tickets?.length || 0;
+  if (points < 1) return { awarded: false, points: 0, reason: 'no_tickets' };
+
+  const awardedAt = new Date();
+  const claimed = await Booking.findOneAndUpdate(
+    {
+      _id: booking._id,
+      rewardPointsAwardedAt: null,
+      status: { $in: ['active', 'used'] },
+      'payment.status': 'paid',
+    },
+    { $set: { rewardPointsAwardedAt: awardedAt, rewardPointsAwarded: points } },
+    { new: true },
+  );
+
+  if (!claimed) return { awarded: false, points: 0, reason: 'already_awarded' };
+
+  try {
+    const updatedUser = await User.findOneAndUpdate(
+      { _id: user._id, role: 'user' },
+      { $inc: { points } },
+      { new: true },
+    ).select('points');
+
+    if (!updatedUser) throw new Error('Customer account no longer exists.');
+    return { awarded: true, points, totalPoints: updatedUser.points };
+  } catch (error) {
+    await Booking.updateOne(
+      { _id: booking._id, rewardPointsAwardedAt: awardedAt },
+      { $set: { rewardPointsAwardedAt: null, rewardPointsAwarded: 0 } },
+    ).catch(() => {});
+    throw error;
+  }
+};
+
 const logBookingEmailContext = (label, booking, extra = {}) => {
+  if (process.env.NODE_ENV === 'test') return;
+
   console.log(`[Booking/Fulfillment] ${label}`, {
     bookingId: String(booking?._id || ''),
-    customerEmail: booking?.customer?.email || null,
     movieTitle: booking?.schedule?.movie?.title || booking?.movie?.title || null,
     showTime: booking?.schedule?.showTime || null,
     hall: booking?.schedule?.hall?.hallName || null,
-    seats: booking?.seats || [],
-    tickets: booking?.tickets || [],
+    seatCount: booking?.seats?.length || 0,
     totalPrice: booking?.totalPrice,
     bookingStatus: booking?.status,
     paymentStatus: booking?.payment?.status,
     paymentMethod: booking?.payment?.method,
-    transactionId: booking?.payment?.transactionId,
     ticketEmailSentAt: booking?.ticketEmailSentAt || null,
-    ...extra,
+    source: extra.source,
+    reason: extra.reason,
+    emailSuccess: extra.emailResult?.success,
   });
 };
 
-export const sendPaidBookingEmail = async (booking) => {
+export const sendPaidBookingEmail = async (booking, { force = false } = {}) => {
   if (!booking) return { success: false, reason: 'missing_booking' };
   if (booking.ticketEmailSentAt) return { success: true, skipped: true, reason: 'already_sent' };
   if (!booking.customer?.email) return { success: false, reason: 'missing_customer_email' };
 
   await booking.populate([
+    { path: 'userId', select: 'notifications' },
     { path: 'movie', select: 'title' },
     { path: 'schedule', select: 'showTime hall movie', populate: { path: 'movie', select: 'title' } },
   ]);
+
+  if (!force && booking.userId?.notifications === false) {
+    if (!booking.ticketEmailSuppressedAt) {
+      booking.ticketEmailSuppressedAt = new Date();
+      await booking.save();
+    }
+    return { success: false, skipped: true, reason: 'notifications_disabled' };
+  }
 
   if (!booking.schedule?.showTime) return { success: false, reason: 'missing_show_time' };
 
@@ -76,6 +141,7 @@ export const sendPaidBookingEmail = async (booking) => {
 
   if (result?.success) {
     booking.ticketEmailSentAt = new Date();
+    booking.ticketEmailSuppressedAt = null;
     await booking.save();
   }
 
@@ -88,7 +154,7 @@ const sendPaidBookingEmailWithRetry = async (booking, attempts = 3) => {
   let lastResult = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     lastResult = await sendPaidBookingEmail(booking);
-    if (lastResult?.success) return lastResult;
+    if (lastResult?.success || lastResult?.skipped) return lastResult;
     console.warn('[Booking/Fulfillment] Ticket email failed, retrying...', {
       bookingId: String(booking?._id || ''),
       attempt,
@@ -110,6 +176,7 @@ export const ensurePaidBookingEmailQueued = (bookingOrId, source = 'unspecified'
     let booking = null;
     try {
       booking = await Booking.findById(bookingKey)
+        .populate('userId', 'notifications')
         .populate('movie', 'title')
         .populate({
           path: 'schedule',
@@ -125,10 +192,14 @@ export const ensurePaidBookingEmailQueued = (bookingOrId, source = 'unspecified'
         return;
       }
 
-      if (booking.payment?.status !== 'paid' || booking.ticketEmailSentAt) {
+      if (booking.payment?.status !== 'paid' || booking.ticketEmailSentAt || booking.ticketEmailSuppressedAt) {
         logBookingEmailContext('Background email skipped', booking, {
           source,
-          reason: booking.ticketEmailSentAt ? 'already_sent' : 'not_paid',
+          reason: booking.ticketEmailSentAt
+            ? 'already_sent'
+            : booking.ticketEmailSuppressedAt
+              ? 'notifications_disabled'
+              : 'not_paid',
         });
         return;
       }
@@ -155,6 +226,7 @@ export const processUnsentPaidBookingEmails = async (limit = 20) => {
     status: 'active',
     'payment.status': 'paid',
     ticketEmailSentAt: null,
+    ticketEmailSuppressedAt: null,
     updatedAt: { $gte: updatedAfter },
   })
     .sort({ updatedAt: -1 })
@@ -184,6 +256,7 @@ export const markBookingPaidAndNotify = async ({
   awaitEmail = true,
 }) => {
   const booking = await Booking.findById(bookingId)
+    .populate('userId', 'notifications')
     .populate('movie', 'title')
     .populate({
       path: 'schedule',
@@ -210,9 +283,18 @@ export const markBookingPaidAndNotify = async ({
   booking.status = 'active';
   await booking.save();
 
-  logBookingEmailContext('Booking marked paid', booking);
+  const pointsResult = await awardPaidBookingPoints(booking._id);
+
+  logBookingEmailContext('Booking marked paid', booking, { pointsResult });
 
   if (!awaitEmail) {
+    if (booking.userId?.notifications === false) {
+      booking.ticketEmailSuppressedAt = booking.ticketEmailSuppressedAt || new Date();
+      await booking.save();
+      const emailResult = { success: false, skipped: true, reason: 'notifications_disabled' };
+      logBookingEmailContext('Booking email suppressed by user preference', booking, { emailResult });
+      return { booking, emailResult };
+    }
     const emailResult = ensurePaidBookingEmailQueued(booking._id, 'mark_paid');
     logBookingEmailContext('Booking paid notification queued', booking, { emailResult });
     return { booking, emailResult };

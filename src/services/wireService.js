@@ -1,3 +1,5 @@
+// wireService.js - Бүрэн шинэчлэгдсэн хувилбар
+
 const WIRE_BASE_URL = process.env.WIRE_API_BASE_URL || 'https://api.wire.mn/v1';
 const WIRE_API_TIMEOUT_MS = Number(process.env.WIRE_API_TIMEOUT_MS || 10000);
 const sandboxIntents = new Map();
@@ -51,7 +53,7 @@ const getWireErrorMessage = (data, fallbackStatus) => (
 
 const isPayloadFieldError = (err) => (
   [400, 422].includes(Number(err?.statusCode)) &&
-  /unknown|unrecognized|invalid|not allowed|unexpected|unsupported/i.test(JSON.stringify(err?.details || err?.message || ''))
+  /unknown|unrecognized|additional properties|invalid|not allowed|unexpected|unsupported/i.test(JSON.stringify(err?.details || err?.message || ''))
 );
 
 const wireRequest = async (path, { method = 'POST', payload, idempotencyKey, query } = {}) => {
@@ -117,7 +119,7 @@ const wireRequest = async (path, { method = 'POST', payload, idempotencyKey, que
 
 export const getDefaultAllowedOperators = () => {
   let rawEnv = process.env.WIRE_ALLOWED_OPERATORS || '';
-  rawEnv = rawEnv.replace(/[\[\]\s"']/g, ''); 
+  rawEnv = rawEnv.replace(/[\[\]\s"']/g, '');
 
   const configured = rawEnv
     .split(',')
@@ -162,24 +164,37 @@ const getSandboxCheckoutUrl = (paymentIntentId) => (
   `${getPublicApiUrl()}/api/wire/sandbox/checkout/${paymentIntentId}`
 );
 
-export const getPaymentReference = (bookingId) => (
-  `KDT-${String(bookingId || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase()}`
-);
+export const getPaymentReference = (_bookingId) => 'Тасалбар худалдан авалт';
+
+// ГҮЙЛГЭЭНИЙ УТГЫН БҮХ БОЛОМЖИТ ТАЛБАРУУД
+const REFERENCE_FIELD_NAMES = [
+  'description', 'desc', 'note', 'memo', 'purpose', 'comment', 'remarks',
+  'remark', 'message', 'reference', 'ref', 'payment_reference', 'paymentReference',
+  'payment_description', 'paymentDescription', 'transaction_reference',
+  'transactionReference', 'transaction_description', 'transactionDescription',
+  'statement_descriptor', 'value', 'utga', 'transactionDescription',
+  'txnDesc', 'txnDescription', 'transactionRemarks', 'transactionRemark',
+  'paymentPurpose', 'payment_purpose', 'additionalInfo', 'additional_info',
+  'billNumber', 'bill_number', 'invoiceNo', 'invoice_no', 'qr', 'qrcode',
+  'qrCode', 'qr_code', 'qrText', 'qr_text', 'qrtext', 'data', 'payload',
+  'guitgel', 'gүйлгээ', 'utga', 'tailbar', 'tailbariin_utga'
+];
+
+// МОНГОЛ ГҮЙЛГЭЭНИЙ УТГЫН НЭМЭЛТ ТАЛБАРУУД
+const MN_REFERENCE_FIELDS = [
+  'гуйлгээний_утга', 'гүйлгээний_утга', 'гуйлгээ', 'гүйлгээ',
+  'утга', 'тайлбар', 'тайлбарын_утга', 'төлбөрийн_утга',
+  'төлбөр_утга', 'захиалгын_дугаар', 'захиалга_дугаар'
+];
+
+const QR_PAYLOAD_FIELD_NAMES = ['qr', 'qrcode', 'qrCode', 'qr_code', 'qrText', 'qr_text', 'qrtext', 'data', 'payload'];
+const isQrPayloadField = (key) => QR_PAYLOAD_FIELD_NAMES.some((field) => String(key).toLowerCase().includes(field.toLowerCase()));
 
 const getPaymentReferenceFields = (bookingId, suffix = '') => {
-  const transactionReference = getPaymentReference(bookingId) + suffix;
+  const transactionReference = (getPaymentReference(bookingId) + suffix).slice(0, 500);
+
   return {
     description: transactionReference,
-    note: transactionReference,
-    memo: transactionReference,
-    purpose: transactionReference,
-    comment: transactionReference,
-    reference: transactionReference,
-    payment_reference: transactionReference,
-    payment_description: transactionReference,
-    transaction_reference: transactionReference,
-    transaction_description: transactionReference,
-    statement_descriptor: transactionReference,
     metadata: {
       booking_id: String(bookingId),
       reference: transactionReference,
@@ -190,29 +205,126 @@ const getPaymentReferenceFields = (bookingId, suffix = '') => {
   };
 };
 
-const referenceQueryKeys = [
-  'description', 'desc', 'note', 'memo', 'purpose', 'comment', 'remarks',
-  'remark', 'message', 'reference', 'ref', 'payment_reference', 'paymentReference',
-  'payment_description', 'paymentDescription', 'transaction_reference',
-  'transactionReference', 'transaction_description', 'transactionDescription',
-  'statement_descriptor', 'value', 'utga',
-];
+// EMV QR кодны CRC тооцоолол
+const getUtf8Bytes = (value) => Buffer.from(String(value), 'utf8');
 
-const isMissingReferenceValue = (value) => (
-  value === null || value === undefined || value === '' ||
-  /^null$/i.test(String(value)) || /^undefined$/i.test(String(value))
+const crc16CcittFalse = (value) => {
+  let crc = 0xFFFF;
+  for (const byte of getUtf8Bytes(value)) {
+    crc ^= byte << 8;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
+      crc &= 0xFFFF;
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+};
+
+const parseEmvTags = (payload) => {
+  const tags = [];
+  let index = 0;
+  while (index + 4 <= payload.length) {
+    const id = payload.slice(index, index + 2);
+    const lengthText = payload.slice(index + 2, index + 4);
+    const length = Number(lengthText);
+    if (!/^\d{2}$/.test(id) || !/^\d{2}$/.test(lengthText) || index + 4 + length > payload.length) {
+      return null;
+    }
+    tags.push({ id, value: payload.slice(index + 4, index + 4 + length) });
+    index += 4 + length;
+  }
+  return index === payload.length ? tags : null;
+};
+
+const serializeEmvTags = (tags) => {
+  const parts = [];
+  for (const { id, value } of tags) {
+    const byteLength = getUtf8Bytes(value).length;
+    if (byteLength > 99) return null;
+    parts.push(`${id}${String(byteLength).padStart(2, '0')}${value}`);
+  }
+  return parts.join('');
+};
+
+// EMV QR кодонд гүйлгээний утга оруулах
+const injectReferenceIntoEmvQr = (payload, transactionReference) => {
+  const raw = String(payload || '');
+  if (!transactionReference || !/^000201/.test(raw) || !/6304[0-9A-F]{4}$/i.test(raw)) return payload;
+
+  const withoutCrc = raw.slice(0, -8);
+  const existingCrc = raw.slice(-4).toUpperCase();
+  const expectedCrc = crc16CcittFalse(`${withoutCrc}6304`);
+  if (existingCrc !== expectedCrc) return payload;
+
+  const rootTags = parseEmvTags(withoutCrc);
+  if (!rootTags) return payload;
+
+  const additionalData = rootTags.find((tag) => tag.id === '62');
+  const additionalTags = additionalData ? parseEmvTags(additionalData.value) : [];
+  if (!additionalTags) return payload;
+
+  // Гүйлгээний утга оруулах таг ID-ууд
+  const referenceTagIds = ['01', '02', '03', '05', '08', '09', '10', '11', '12', '13', '14', '15'];
+
+  let foundExisting = false;
+  for (const id of referenceTagIds) {
+    const existing = additionalTags.find((tag) => tag.id === id);
+    if (existing) {
+      existing.value = transactionReference;
+      foundExisting = true;
+    }
+  }
+
+  if (!foundExisting) {
+    // Бүх таг дүүрсэн бол эхний тагийг солих
+    additionalTags.push({ id: '05', value: transactionReference });
+  }
+
+  const nextAdditionalValue = serializeEmvTags(additionalTags);
+  if (!nextAdditionalValue) return payload;
+  if (additionalData) additionalData.value = nextAdditionalValue;
+  else rootTags.push({ id: '62', value: nextAdditionalValue });
+
+  const withoutNextCrc = serializeEmvTags(rootTags);
+  if (!withoutNextCrc) return payload;
+  return `${withoutNextCrc}6304${crc16CcittFalse(`${withoutNextCrc}6304`)}`;
+};
+
+const withReferenceInPaymentString = (value, transactionReference) => {
+  if (typeof value !== 'string') return value;
+  return injectReferenceIntoEmvQr(value, transactionReference);
+};
+
+const isActionUrl = (value) => /^[a-z][a-z0-9+.-]*:\/\//i.test(value || '');
+const isAssetUrl = (value) => (
+  /\.(avif|bmp|gif|ico|jpeg|jpg|png|svg|webp)(\?|#|$)/i.test(value || '') ||
+  /\/(launcher-icon|logo|icon|image|thumbnail|avatar)[^/]*$/i.test(value || '')
 );
 
+// URL-ын query параметрүүдэд гүйлгээний утга оруулах
 const withReferenceQueryParams = (url, transactionReference) => {
   if (!transactionReference || !isActionUrl(url) || isAssetUrl(url)) return url;
 
   try {
     const parsed = new URL(url);
-    referenceQueryKeys.forEach((key) => {
-      if (!parsed.searchParams.has(key) || isMissingReferenceValue(parsed.searchParams.get(key))) {
-        parsed.searchParams.set(key, transactionReference);
-      }
+
+    // Бүх боломжит талбаруудад гүйлгээний утга оруулах
+    const qrPayloadKeySet = new Set(QR_PAYLOAD_FIELD_NAMES.map((key) => key.toLowerCase()));
+    const allFields = [...REFERENCE_FIELD_NAMES, ...MN_REFERENCE_FIELDS]
+      .filter((key) => !qrPayloadKeySet.has(String(key).toLowerCase()));
+    const targetFields = allFields.filter((key) => parsed.searchParams.has(key));
+
+    (targetFields.length ? targetFields : ['description']).forEach((key) => {
+      parsed.searchParams.set(key, transactionReference);
+        // EMV QR код бол гүйлгээний утга оруулах
     });
+
+    // QR payload-д зориулсан тусгай боловсруулалт
+    QR_PAYLOAD_FIELD_NAMES.forEach((key) => {
+      const rawValue = parsed.searchParams.get(key);
+      if (rawValue) parsed.searchParams.set(key, rawValue);
+    });
+
     return parsed.toString();
   } catch {
     return url;
@@ -220,35 +332,47 @@ const withReferenceQueryParams = (url, transactionReference) => {
 };
 
 export const enrichPaymentActionReferences = (value, bookingId) => {
-  const transactionReference = String(bookingId || '').startsWith('KDT-')
-    ? String(bookingId)
-    : getPaymentReference(bookingId);
+  const transactionReference = getPaymentReference(bookingId);
+
   if (!value || !transactionReference) return value;
 
-  if (typeof value === 'string') {
+  // URL бол
+  if (typeof value === 'string' && isActionUrl(value)) {
     return withReferenceQueryParams(value, transactionReference);
   }
 
+  // Текст бол (QR текст гэх мэт)
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  // Массив бол
   if (Array.isArray(value)) {
     return value.map((item) => enrichPaymentActionReferences(item, bookingId));
   }
 
+  // Объект бол
   if (typeof value === 'object') {
     const next = {};
     Object.entries(value).forEach(([key, item]) => {
       const lowerKey = key.toLowerCase();
-      if (
-        typeof item === 'string' &&
-        (/url|link|deeplink|checkout|redirect|web/.test(lowerKey))
-      ) {
+
+      // URL талбарууд
+      if (typeof item === 'string' && (/url|link|deeplink|checkout|redirect|web/.test(lowerKey))) {
         next[key] = withReferenceQueryParams(item, transactionReference);
         return;
       }
 
-      if (
-        /description|desc|note|memo|purpose|comment|remark|message|reference|descriptor|utga/.test(lowerKey) &&
-        isMissingReferenceValue(item)
-      ) {
+      if (typeof item === 'string' && isQrPayloadField(lowerKey)) {
+        next[key] = item;
+        return;
+      }
+
+      // Гүйлгээний утгын талбарууд
+      if (typeof item === 'string' && (
+        REFERENCE_FIELD_NAMES.some(field => lowerKey.includes(field)) ||
+        MN_REFERENCE_FIELDS.some(field => lowerKey.includes(field))
+      )) {
         next[key] = transactionReference;
         return;
       }
@@ -256,13 +380,25 @@ export const enrichPaymentActionReferences = (value, bookingId) => {
       next[key] = enrichPaymentActionReferences(item, bookingId);
     });
 
+    // Бүх үндсэн талбаруудыг заавал оруулах
     return {
       ...next,
       description: next.description || transactionReference,
+      desc: next.desc || transactionReference,
+      note: next.note || transactionReference,
+      memo: next.memo || transactionReference,
+      purpose: next.purpose || transactionReference,
+      comment: next.comment || transactionReference,
+      remarks: next.remarks || transactionReference,
+      remark: next.remark || transactionReference,
       reference: next.reference || transactionReference,
       payment_reference: next.payment_reference || transactionReference,
       transaction_reference: next.transaction_reference || transactionReference,
       transaction_description: next.transaction_description || transactionReference,
+      гүйлгээний_утга: next.гүйлгээний_утга || transactionReference,
+      гуйлгээний_утга: next.гуйлгээний_утга || transactionReference,
+      утга: next.утга || transactionReference,
+      тайлбар: next.тайлбар || transactionReference,
     };
   }
 
@@ -275,18 +411,20 @@ export const getWireActionPageUrl = (paymentIntentId) => (
 
 const createLocalSandboxPaymentIntent = ({ bookingId, wireAmount, allowedOperators }) => {
   const id = `pi_test_${bookingId}`;
+  const referenceFields = getPaymentReferenceFields(bookingId);
   const intent = {
     id,
     object: 'payment_intent',
     amount: wireAmount,
     currency: 'MNT',
+    description: referenceFields.description,
     status: 'new',
     client_secret: `pi_test_secret_${bookingId}`,
     automatic_operator: true,
     allowed_operators: allowedOperators?.length ? allowedOperators : ['sandbox'],
     selected_operator: 'sandbox',
     next_action: null,
-    ...getPaymentReferenceFields(bookingId),
+    ...referenceFields,
     livemode: false,
     created: Math.floor(Date.now() / 1000),
     expires_at: Math.floor(Date.now() / 1000) + 600,
@@ -302,20 +440,22 @@ export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperat
   }
 
   assertSafeWireMode(getApiKey());
-  
-  const finalOperators = allowedOperators && allowedOperators.length 
-    ? allowedOperators 
+
+  const finalOperators = allowedOperators && allowedOperators.length
+    ? allowedOperators
     : getDefaultAllowedOperators();
 
   assertLiveOperators(finalOperators);
 
   const referenceFields = getPaymentReferenceFields(bookingId);
+
   const payload = {
     amount: wireAmount,
     currency: 'MNT',
+    description: referenceFields.description,
     automatic_operator: shouldUseAutomaticOperator(finalOperators),
     allowed_operators: finalOperators.length ? finalOperators : undefined,
-    ...referenceFields,
+    metadata: referenceFields.metadata,
   };
 
   try {
@@ -333,9 +473,10 @@ export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperat
         idempotencyKey: `wire-pi-${bookingId}-${wireAmount}${suffix}`,
       });
     }
-    
+
     if (!isPayloadFieldError(err)) throw err;
-    console.warn('[Wire] Reference autofill fields were rejected on create; retrying with basic description/metadata.', err.message);
+    console.warn('[Wire] Reference autofill fields were rejected on create; retrying with basic fields.', err.message);
+    // Fallback - зөвхөн үндсэн талбарууд
     return wireRequest('/payment_intents', {
       payload: {
         amount: wireAmount,
@@ -350,12 +491,6 @@ export const createPaymentIntent = async ({ bookingId, wireAmount, allowedOperat
   }
 };
 
-const isActionUrl = (value) => /^[a-z][a-z0-9+.-]*:\/\//i.test(value || '');
-const isAssetUrl = (value) => (
-  /\.(avif|bmp|gif|ico|jpeg|jpg|png|svg|webp)(\?|#|$)/i.test(value || '') ||
-  /\/(launcher-icon|logo|icon|image|thumbnail|avatar)[^/]*$/i.test(value || '')
-);
-
 export const confirmPaymentIntent = async ({ bookingId, paymentIntentId, allowedOperators, returnUrl }) => {
   if (isLocalWireSandbox()) {
     return {
@@ -368,15 +503,28 @@ export const confirmPaymentIntent = async ({ bookingId, paymentIntentId, allowed
   }
 
   const operator = getSelectedOperator(allowedOperators);
+
   const fullPayload = {
-      return_url: returnUrl,
-      ...(operator ? { operator } : {}),
+    return_url: returnUrl,
+    ...(operator ? { operator } : {}),
   };
 
-  return wireRequest(`/payment_intents/${paymentIntentId}/confirm`, {
-    payload: fullPayload,
-    idempotencyKey: `wire-confirm-${bookingId}-${paymentIntentId}`,
-  });
+  try {
+    return await wireRequest(`/payment_intents/${paymentIntentId}/confirm`, {
+      payload: fullPayload,
+      idempotencyKey: `wire-confirm-${bookingId}-${paymentIntentId}`,
+    });
+  } catch (err) {
+    if (!isPayloadFieldError(err)) throw err;
+    console.warn('[Wire] Reference fields were rejected on confirm; retrying with minimal fields.', err.message);
+    return wireRequest(`/payment_intents/${paymentIntentId}/confirm`, {
+      payload: {
+        return_url: returnUrl,
+        ...(operator ? { operator } : {}),
+      },
+      idempotencyKey: `wire-confirm-basic-${bookingId}-${paymentIntentId}`,
+    });
+  }
 };
 
 export const retrievePaymentIntent = async (paymentIntentId, fallback = {}) => {

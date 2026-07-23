@@ -5,11 +5,7 @@ import User from '../models/User.js';
 
 const paidMatch = {
   status: { $in: ['active', 'used', 'confirmed'] },
-  $or: [
-    { 'payment.status': 'paid' },
-    { 'payment.status': { $exists: false } },
-    { payment: null },
-  ],
+  'payment.status': 'paid',
 };
 
 const bookingMatch = {
@@ -21,7 +17,7 @@ const paidRevenueExpr = {
     {
       $and: [
         { $in: ['$status', ['active', 'used', 'confirmed']] },
-        { $in: [{ $ifNull: ['$payment.status', 'paid'] }, ['paid']] },
+        { $eq: ['$payment.status', 'paid'] },
       ],
     },
     { $ifNull: ['$totalPrice', '$totalAmount'] },
@@ -50,11 +46,32 @@ const refundedRevenueExpr = {
   ],
 };
 
+const paidTicketCountExpr = {
+  $cond: [
+    {
+      $and: [
+        { $in: ['$status', ['active', 'used', 'confirmed']] },
+        { $eq: ['$payment.status', 'paid'] },
+      ],
+    },
+    { $size: { $ifNull: ['$seats', []] } },
+    0,
+  ],
+};
+
+const REPORT_TIMEZONE = '+08:00';
+
+function parseReportDate(value, endOfDay = false) {
+  if (!value) return null;
+  const clock = endOfDay ? '23:59:59.999' : '00:00:00.000';
+  const parsed = new Date(`${value}T${clock}${REPORT_TIMEZONE}`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function getDateRange(query) {
   const now = new Date();
-  const start = query.startDate ? new Date(query.startDate) : new Date(0);
-  const end = query.endDate ? new Date(query.endDate) : now;
-  end.setHours(23, 59, 59, 999);
+  const start = parseReportDate(query.startDate) || new Date(0);
+  const end = parseReportDate(query.endDate, true) || now;
   return { start, end };
 }
 
@@ -69,6 +86,13 @@ const revenueExpr = { $ifNull: ['$totalPrice', '$totalAmount'] };
 const movieExpr = { $ifNull: ['$movie', '$movieId'] };
 const scheduleExpr = { $ifNull: ['$schedule', '$scheduleId'] };
 const paymentMethodExpr = { $ifNull: ['$payment.method', { $ifNull: ['$paymentMethod', 'other'] }] };
+const bookingChannelExpr = {
+  $cond: [
+    { $ne: [{ $ifNull: ['$payment.receivedBy', null] }, null] },
+    'cashier',
+    { $ifNull: ['$bookingChannel', 'web_app'] },
+  ],
+};
 
 export const dailySales = async (req, res) => {
   try {
@@ -76,13 +100,15 @@ export const dailySales = async (req, res) => {
       { $match: { ...bookingMatch, ...dateMatch(req.query) } },
       {
         $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-          totalRevenue: { $sum: revenueExpr },
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: REPORT_TIMEZONE } },
+          totalRevenue: { $sum: paidRevenueExpr },
+          bookedAmount: { $sum: revenueExpr },
           paidRevenue: { $sum: paidRevenueExpr },
           unpaidRevenue: { $sum: unpaidRevenueExpr },
           refundedRevenue: { $sum: refundedRevenueExpr },
-          ticketCount: { $sum: ticketCountExpr },
+          ticketCount: { $sum: paidTicketCountExpr },
           bookingCount: { $sum: 1 },
+          paidBookingCount: { $sum: { $cond: [{ $and: [{ $in: ['$status', ['active', 'used', 'confirmed']] }, { $eq: ['$payment.status', 'paid'] }] }, 1, 0] } },
           cancelledCount: { $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] } },
         },
       },
@@ -95,13 +121,15 @@ export const dailySales = async (req, res) => {
 
     const summary = rows.reduce((acc, row) => ({
       totalRevenue: acc.totalRevenue + (row.totalRevenue || 0),
+      bookedAmount: acc.bookedAmount + (row.bookedAmount || 0),
       paidRevenue: acc.paidRevenue + (row.paidRevenue || 0),
       unpaidRevenue: acc.unpaidRevenue + (row.unpaidRevenue || 0),
       refundedRevenue: acc.refundedRevenue + (row.refundedRevenue || 0),
       ticketCount: acc.ticketCount + (row.ticketCount || 0),
       bookingCount: acc.bookingCount + (row.bookingCount || 0),
+      paidBookingCount: acc.paidBookingCount + (row.paidBookingCount || 0),
       cancelledCount: acc.cancelledCount + (row.cancelledCount || 0),
-    }), { totalRevenue: 0, paidRevenue: 0, unpaidRevenue: 0, refundedRevenue: 0, ticketCount: 0, bookingCount: 0, cancelledCount: 0 });
+    }), { totalRevenue: 0, bookedAmount: 0, paidRevenue: 0, unpaidRevenue: 0, refundedRevenue: 0, ticketCount: 0, bookingCount: 0, paidBookingCount: 0, cancelledCount: 0 });
 
     res.json({ success: true, data: rows, summary });
   } catch (err) {
@@ -116,15 +144,15 @@ export const monthlySales = async (req, res) => {
       {
         $match: {
           ...bookingMatch,
-          createdAt: { $gte: new Date(`${year}-01-01T00:00:00.000Z`), $lte: new Date(`${year}-12-31T23:59:59.999Z`) },
+          createdAt: { $gte: parseReportDate(`${year}-01-01`), $lte: parseReportDate(`${year}-12-31`, true) },
         },
       },
       {
         $group: {
-          _id: { $month: '$createdAt' },
-          totalRevenue: { $sum: revenueExpr },
+          _id: { $month: { date: '$createdAt', timezone: REPORT_TIMEZONE } },
+          totalRevenue: { $sum: paidRevenueExpr },
           paidRevenue: { $sum: paidRevenueExpr },
-          ticketCount: { $sum: ticketCountExpr },
+          ticketCount: { $sum: paidTicketCountExpr },
           bookingCount: { $sum: 1 },
           cancelledCount: { $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] } },
         },
@@ -147,7 +175,7 @@ export const monthlySales = async (req, res) => {
 export const paymentMethods = async (req, res) => {
   try {
     const data = await Booking.aggregate([
-      { $match: { ...bookingMatch, ...dateMatch(req.query) } },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
       { $group: { _id: paymentMethodExpr, totalRevenue: { $sum: revenueExpr }, count: { $sum: 1 } } },
       { $sort: { totalRevenue: -1 } },
     ]);
@@ -162,11 +190,11 @@ export const refunds = async (req, res) => {
   try {
     const data = await Booking.aggregate([
       { $match: { status: 'cancelled', ...dateMatch(req.query, 'updatedAt') } },
-      { $group: { _id: { $ifNull: ['$cancellationReason', 'Тодорхойгүй'] }, refundedAmount: { $sum: revenueExpr }, count: { $sum: 1 } } },
+      { $group: { _id: { $ifNull: ['$cancellation.reason', 'Тодорхойгүй'] }, refundedAmount: { $sum: revenueExpr }, count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]);
     const totalRefunded = data.reduce((sum, row) => sum + (row.refundedAmount || 0), 0);
-    res.json({ success: true, data, totalRefunded });
+    res.json({ success: true, data, totalRefunded, totalCancelledAmount: totalRefunded });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -175,7 +203,7 @@ export const refunds = async (req, res) => {
 export const movieViewership = async (req, res) => {
   try {
     const data = await Booking.aggregate([
-      { $match: { ...bookingMatch, ...dateMatch(req.query) } },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
       { $group: { 
           _id: movieExpr, 
           totalRevenue: { $sum: revenueExpr }, 
@@ -235,7 +263,7 @@ export const topMovies = async (req, res) => {
     const limit = parseInt(req.query.limit, 10) || 10;
     const sortBy = req.query.sortBy === 'tickets' ? 'ticketCount' : 'totalRevenue';
     const data = await Booking.aggregate([
-      { $match: { ...bookingMatch, ...dateMatch(req.query) } },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
       { $group: { _id: movieExpr, totalRevenue: { $sum: revenueExpr }, ticketCount: { $sum: ticketCountExpr }, bookingCount: { $sum: 1 } } },
       { $lookup: { from: 'movies', localField: '_id', foreignField: '_id', as: 'movie' } },
       { $unwind: { path: '$movie', preserveNullAndEmptyArrays: true } },
@@ -264,7 +292,7 @@ export const newReleases = async (req, res) => {
 export const schedulePerformance = async (req, res) => {
   try {
     const data = await Booking.aggregate([
-      { $match: { ...bookingMatch, ...dateMatch(req.query) } },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
       { $group: { _id: scheduleExpr, totalRevenue: { $sum: revenueExpr }, ticketCount: { $sum: ticketCountExpr }, bookingCount: { $sum: 1 } } },
       { $lookup: { from: 'schedules', localField: '_id', foreignField: '_id', as: 'schedule' } },
       { $unwind: { path: '$schedule', preserveNullAndEmptyArrays: true } },
@@ -283,7 +311,12 @@ export const bookingChannels = async (req, res) => {
   try {
     const data = await Booking.aggregate([
       { $match: { ...bookingMatch, ...dateMatch(req.query) } },
-      { $group: { _id: { $ifNull: ['$bookingChannel', 'Апп/Веб'] }, totalRevenue: { $sum: revenueExpr }, count: { $sum: 1 } } },
+      { $group: {
+        _id: bookingChannelExpr,
+        totalRevenue: { $sum: paidRevenueExpr },
+        count: { $sum: 1 },
+        paidCount: { $sum: { $cond: [{ $and: [{ $in: ['$status', ['active', 'used', 'confirmed']] }, { $eq: ['$payment.status', 'paid'] }] }, 1, 0] } },
+      } },
       { $sort: { count: -1 } },
     ]);
     const totalBookings = data.reduce((sum, row) => sum + row.count, 0);
@@ -313,7 +346,7 @@ export const advanceBooking = async (req, res) => {
             },
           },
           count: { $sum: 1 },
-          totalRevenue: { $sum: revenueExpr },
+          totalRevenue: { $sum: paidRevenueExpr },
         },
       },
       { $sort: { count: -1 } },
@@ -327,9 +360,20 @@ export const advanceBooking = async (req, res) => {
 export const seatTypes = async (req, res) => {
   try {
     const data = await Booking.aggregate([
-      { $match: { ...bookingMatch, ...dateMatch(req.query) } },
-      { $unwind: { path: '$tickets', preserveNullAndEmptyArrays: true } },
-      { $group: { _id: { $ifNull: ['$tickets.type', 'adult'] }, count: { $sum: 1 }, totalRevenue: { $sum: { $ifNull: ['$tickets.price', 0] } } } },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
+      {
+        $project: {
+          ticketRows: {
+            $cond: [
+              { $gt: [{ $size: { $ifNull: ['$tickets', []] } }, 0] },
+              '$tickets',
+              { $map: { input: { $ifNull: ['$seats', []] }, as: 'seat', in: { type: 'adult', price: 0 } } },
+            ],
+          },
+        },
+      },
+      { $unwind: '$ticketRows' },
+      { $group: { _id: { $ifNull: ['$ticketRows.type', 'adult'] }, count: { $sum: 1 }, totalRevenue: { $sum: { $ifNull: ['$ticketRows.price', 0] } } } },
       { $sort: { count: -1 } },
     ]);
     const totalSeats = data.reduce((sum, row) => sum + row.count, 0);
@@ -346,7 +390,7 @@ export const discounts = async (req, res) => {
 export const hallOccupancy = async (req, res) => {
   try {
     const data = await Booking.aggregate([
-      { $match: { ...bookingMatch, ...dateMatch(req.query) } },
+      { $match: { ...paidMatch, ...dateMatch(req.query) } },
       { $group: { _id: scheduleExpr, soldSeats: { $sum: ticketCountExpr }, totalRevenue: { $sum: revenueExpr }, bookingCount: { $sum: 1 } } },
       { $lookup: { from: 'schedules', localField: '_id', foreignField: '_id', as: 'schedule' } },
       { $unwind: { path: '$schedule', preserveNullAndEmptyArrays: true } },
@@ -364,15 +408,18 @@ export const hallOccupancy = async (req, res) => {
 export const peakHours = async (req, res) => {
   try {
     const data = await Booking.aggregate([
-      { $match: { ...bookingMatch, ...dateMatch(req.query) } },
-      { $group: { 
-          _id: { 
-            date: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-            hour: { $hour: '$createdAt' } 
-          }, 
-          bookingCount: { $sum: 1 }, 
-          totalRevenue: { $sum: revenueExpr } 
-        } 
+      { $match: paidMatch },
+      { $lookup: { from: 'schedules', localField: 'schedule', foreignField: '_id', as: 'schedule' } },
+      { $unwind: { path: '$schedule', preserveNullAndEmptyArrays: false } },
+      { $match: dateMatch(req.query, 'schedule.showTime') },
+      { $group: {
+          _id: {
+            date: { $dateToString: { format: '%Y-%m-%d', date: '$schedule.showTime', timezone: REPORT_TIMEZONE } },
+            hour: { $dateToString: { format: '%H:00', date: '$schedule.showTime', timezone: REPORT_TIMEZONE } },
+          },
+          bookingCount: { $sum: 1 },
+          totalRevenue: { $sum: revenueExpr },
+        }
       },
       { $sort: { bookingCount: -1 } },
     ]);
@@ -380,7 +427,7 @@ export const peakHours = async (req, res) => {
     // Group back to a nice format
     res.json({ success: true, data: data.map((row) => ({ 
       date: row._id.date, 
-      hour: `${String(row._id.hour).padStart(2, '0')}:00`, 
+      hour: row._id.hour,
       bookingCount: row.bookingCount, 
       totalRevenue: row.totalRevenue 
     })) });
@@ -392,7 +439,7 @@ export const peakHours = async (req, res) => {
 export const lostRevenue = async (req, res) => {
   try {
     const { start, end } = getDateRange(req.query);
-    const actualEnd = Math.min(end, new Date()); // Don't calculate future losses
+    const actualEnd = new Date(Math.min(end.getTime(), Date.now())); // Don't calculate future losses
     const schedules = await Schedule.find({ showTime: { $gte: start, $lte: actualEnd } }).populate('movie', 'title').lean();
     const scheduleIds = schedules.map((schedule) => schedule._id);
     const soldStats = await Booking.aggregate([
@@ -418,7 +465,8 @@ export const userActivity = async (req, res) => {
     const [newUsers, returningStats] = await Promise.all([
       User.countDocuments(dateMatch(req.query)),
       Booking.aggregate([
-        { $match: { ...bookingMatch, ...dateMatch(req.query) } },
+        { $match: { ...paidMatch, ...dateMatch(req.query) } },
+        { $match: { userId: { $ne: null } } },
         { $group: { _id: '$userId', bookingCount: { $sum: 1 } } },
         { $group: { _id: null, totalActiveUsers: { $sum: 1 }, returningUsers: { $sum: { $cond: [{ $gt: ['$bookingCount', 1] }, 1, 0] } }, firstTimeUsers: { $sum: { $cond: [{ $eq: ['$bookingCount', 1] }, 1, 0] } }, avgBookingsPerUser: { $avg: '$bookingCount' } } },
       ]),
@@ -433,13 +481,13 @@ export const loyaltyReport = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit, 10) || 20;
     const data = await Booking.aggregate([
-      { $match: bookingMatch },
+      { $match: { ...paidMatch, ...dateMatch(req.query), userId: { $ne: null } } },
       { $group: { _id: '$userId', totalSpent: { $sum: revenueExpr }, bookingCount: { $sum: 1 }, ticketCount: { $sum: ticketCountExpr }, lastBooking: { $max: '$createdAt' } } },
       { $sort: { totalSpent: -1 } },
       { $limit: limit },
       { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'user' } },
       { $unwind: { path: '$user', preserveNullAndEmptyArrays: true } },
-      { $project: { userName: { $ifNull: ['$user.name', 'Зочин'] }, email: '$user.email', loyaltyPoints: '$user.loyaltyPoints', totalSpent: 1, bookingCount: 1, ticketCount: 1, lastBooking: 1 } },
+      { $project: { userName: { $ifNull: ['$user.name', 'Зочин'] }, email: '$user.email', loyaltyPoints: { $ifNull: ['$user.points', 0] }, totalSpent: 1, bookingCount: 1, ticketCount: 1, lastBooking: 1 } },
     ]);
     res.json({ success: true, data });
   } catch (err) {
@@ -460,12 +508,12 @@ export const cancellations = async (req, res) => {
   try {
     const byReason = await Booking.aggregate([
       { $match: { status: 'cancelled', ...dateMatch(req.query, 'updatedAt') } },
-      { $group: { _id: { $ifNull: ['$cancellationReason', 'Тодорхойгүй'] }, count: { $sum: 1 }, refundedAmount: { $sum: revenueExpr } } },
+      { $group: { _id: { $ifNull: ['$cancellation.reason', 'Тодорхойгүй'] }, count: { $sum: 1 }, refundedAmount: { $sum: revenueExpr } } },
       { $sort: { count: -1 } },
     ]);
     const byMovie = await Booking.aggregate([
       { $match: { status: 'cancelled', ...dateMatch(req.query, 'updatedAt') } },
-      { $group: { _id: '$movie', count: { $sum: 1 } } },
+      { $group: { _id: movieExpr, count: { $sum: 1 } } },
       { $sort: { count: -1 } },
       { $limit: 5 },
       { $lookup: { from: 'movies', localField: '_id', foreignField: '_id', as: 'movie' } },
@@ -484,17 +532,19 @@ export const dashboard = async (req, res) => {
     const [summaryData, topMovies, channels, newUsers] = await Promise.all([
       Booking.aggregate([{ $match: match }, { $group: {
         _id: null,
-        totalRevenue: { $sum: revenueExpr },
+        totalRevenue: { $sum: paidRevenueExpr },
+        bookedAmount: { $sum: revenueExpr },
         paidRevenue: { $sum: paidRevenueExpr },
         unpaidRevenue: { $sum: unpaidRevenueExpr },
         refundedRevenue: { $sum: refundedRevenueExpr },
-        ticketCount: { $sum: ticketCountExpr },
+        ticketCount: { $sum: paidTicketCountExpr },
         bookingCount: { $sum: 1 },
+        paidBookingCount: { $sum: { $cond: [{ $and: [{ $in: ['$status', ['active', 'used', 'confirmed']] }, { $eq: ['$payment.status', 'paid'] }] }, 1, 0] } },
         cancelledCount: { $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] } },
         activeCount: { $sum: { $cond: [{ $in: ['$status', ['active', 'used', 'confirmed']] }, 1, 0] } },
       } }]),
       Booking.aggregate([
-        { $match: match },
+        { $match: { ...paidMatch, ...dateMatch(req.query) } },
         { $group: { _id: movieExpr, totalRevenue: { $sum: revenueExpr }, ticketCount: { $sum: ticketCountExpr } } },
         { $sort: { totalRevenue: -1 } },
         { $limit: 5 },
@@ -502,10 +552,10 @@ export const dashboard = async (req, res) => {
         { $unwind: { path: '$movie', preserveNullAndEmptyArrays: true } },
         { $project: { movieTitle: { $ifNull: ['$movie.title', '?'] }, totalRevenue: 1, ticketCount: 1 } },
       ]),
-      Booking.aggregate([{ $match: match }, { $group: { _id: { $ifNull: ['$bookingChannel', 'Апп/Веб'] }, count: { $sum: 1 } } }]),
+      Booking.aggregate([{ $match: match }, { $group: { _id: bookingChannelExpr, count: { $sum: 1 } } }]),
       User.countDocuments(dateMatch(req.query)),
     ]);
-    res.json({ success: true, summary: summaryData[0] || { totalRevenue: 0, paidRevenue: 0, unpaidRevenue: 0, refundedRevenue: 0, ticketCount: 0, bookingCount: 0, cancelledCount: 0, activeCount: 0 }, topMovies, channels, newUsers });
+    res.json({ success: true, summary: summaryData[0] || { totalRevenue: 0, bookedAmount: 0, paidRevenue: 0, unpaidRevenue: 0, refundedRevenue: 0, ticketCount: 0, bookingCount: 0, paidBookingCount: 0, cancelledCount: 0, activeCount: 0 }, topMovies, channels, newUsers });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -523,6 +573,7 @@ export const transactionLogs = async (req, res) => {
       orderId: b._id,
       movieTitle: b.movie?.title || 'Тодорхойгүй',
       paymentMethod: b.payment?.method || 'Тодорхойгүй',
+      paymentStatus: b.payment?.status || 'pending',
       status: b.status,
       amount: b.totalPrice || 0
     }));

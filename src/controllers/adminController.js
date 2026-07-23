@@ -8,10 +8,10 @@ import News       from '../models/News.js';
 import CinemaInfo from '../models/CinemaInfo.js';
 
 // ================================================
-// TIMEZONE HELPER  (UTC+8, DST байхгүй)
+// TIMEZONE HELPER  (Khovd UTC+7, DST байхгүй)
 // ================================================
 
-const MN_MS = 8 * 60 * 60 * 1000;
+const MN_MS = 7 * 60 * 60 * 1000;
 
 const mnDayRange = (date = new Date()) => {
   const mnNow = new Date(date.getTime() + MN_MS);

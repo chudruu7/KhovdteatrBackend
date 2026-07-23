@@ -4,7 +4,7 @@ import CashierScan from '../models/CashierScan.js';
 
 const THEATER_TIME_ZONE = 'Asia/Hovd';
 const ENTRY_BEFORE_MINUTES = 30;
-const ENTRY_AFTER_MINUTES = 30;
+const ENTRY_AFTER_MINUTES = 40;
 
 const formatTheaterDateTime = (value) => {
   if (!value) return { dateISO: '', date: '', time: '' };
@@ -52,29 +52,29 @@ const getAdmissionStatus = (booking) => {
     return { result: 'invalid', allowed: false, label: 'Олдсонгүй', reason: 'Тасалбар олдсонгүй.' };
   }
   if (booking.status === 'used') {
-    return { result: 'warning', allowed: false, label: 'Ашигласан', reason: 'Энэ тасалбар аль хэдийн нэвтэрсэн байна.' };
+    return { result: 'warning', allowed: false, label: 'Ашиглагдсан', reason: 'Энэ тасалбар аль хэдийн уншуулагдсан байна.' };
   }
-  if (booking.status === 'cancelled') {
-    return { result: 'invalid', allowed: false, label: 'Цуцлагдсан', reason: 'Энэ тасалбар цуцлагдсан байна.' };
+  if (booking.status === 'cancelled' || booking.status === 'expired') {
+    return { result: 'invalid', allowed: false, label: 'Ашиглах боломжгүй', reason: booking.status === 'cancelled' ? 'Энэ тасалбар цуцлагдсан байна.' : 'Нэвтрэх хугацаа дууссан байна.' };
   }
   if (booking.payment?.status !== 'paid') {
-    return { result: 'invalid', allowed: false, label: 'Төлөгдөөгүй', reason: 'Төлбөр баталгаажаагүй байна.' };
+    return { result: 'invalid', allowed: false, label: 'Төлбөр хүлээгдэж байна', reason: 'Төлбөр баталгаажаагүй байна.' };
   }
   if (!showTime || Number.isNaN(showTime.getTime())) {
-    return { result: 'warning', allowed: false, label: 'Цаг тодорхойгүй', reason: 'Үзвэрийн цагийн мэдээлэл дутуу байна.' };
+    return { result: 'warning', allowed: false, label: 'Ашиглах боломжгүй', reason: 'Үзвэрийн цагийн мэдээлэл дутуу байна.' };
   }
 
   const opensAt = showTime.getTime() - ENTRY_BEFORE_MINUTES * 60 * 1000;
   const closesAt = showTime.getTime() + ENTRY_AFTER_MINUTES * 60 * 1000;
 
   if (now < opensAt) {
-    return { result: 'warning', allowed: false, label: 'Эрт байна', reason: 'Энэ үзвэрийн нэвтрэлт хараахан эхлээгүй байна.' };
+    return { result: 'warning', allowed: false, label: 'Нэвтрэх хугацаа болоогүй', reason: 'Үзвэр эхлэхээс 30 минутын өмнө QR тасалбар нээгдэнэ.' };
   }
   if (now > closesAt) {
-    return { result: 'invalid', allowed: false, label: 'Хугацаа өнгөрсөн', reason: 'Энэ үзвэрийн нэвтрүүлэх хугацаа дууссан байна.' };
+    return { result: 'invalid', allowed: false, label: 'Ашиглах боломжгүй', reason: 'Үзвэр эхэлснээс хойш 40 минут өнгөрсөн тул нэвтрэх хугацаа дууссан.' };
   }
 
-  return { result: 'valid', allowed: true, label: 'Нэвтрүүлэх боломжтой', reason: 'Тасалбар хүчинтэй, одоогийн үзвэрийн цагтай таарч байна.' };
+  return { result: 'valid', allowed: true, label: 'Ашиглах боломжтой', reason: 'QR тасалбар нэвтрүүлэх боломжтой.' };
 };
 
 const formatBookingForCashier = (booking) => {
@@ -97,6 +97,7 @@ const formatBookingForCashier = (booking) => {
     totalPrice: booking.totalPrice || 0,
     status: booking.status,
     paymentStatus: booking.payment?.status || 'pending',
+    paymentMethod: booking.payment?.method || '',
     customerName: booking.customer?.name || '',
     customerEmail: booking.customer?.email || '',
     customerPhone: booking.customer?.phone || '',

@@ -61,7 +61,6 @@ const scheduleSchema = new mongoose.Schema({
 
 // Индексүүд
 scheduleSchema.index({ movie: 1, showTime: 1 });
-scheduleSchema.index({ showTime: 1 });
 
 const Schedule = mongoose.model('Schedule', scheduleSchema);
 

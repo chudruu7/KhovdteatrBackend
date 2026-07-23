@@ -87,7 +87,6 @@ const collectPaymentActionView = (value, label = 'Төлөх') => {
 };
 
 const canAccessBooking = (booking, user) => {
-  if (isLocalWireSandbox()) return true;
   if (!user) return false;
   if (user.role === 'admin') return true;
   return booking.userId && String(booking.userId) === String(user._id);
@@ -449,6 +448,8 @@ export const renderWireSandboxCheckout = async (req, res) => {
 };
 
 // ШИНЭЧЛЭГДСЭН (Stateless): Санах ойн Map ашиглахгүйгээр DB болон API-аас шууд дуудна
+// wireController.js - renderWireActionCheckout функц
+
 export const renderWireActionCheckout = async (req, res) => {
   try {
     const { paymentIntentId } = req.params;
@@ -466,20 +467,43 @@ export const renderWireActionCheckout = async (req, res) => {
     const nextAction = enrichPaymentActionReferences(intent.next_action || intent, booking._id);
     const view = collectPaymentActionView(nextAction);
     const amountText = fromWireMntAmount(intent.amount || wireAmount).toLocaleString('mn-MN');
+    const transactionReference = getPaymentReference(booking._id);
 
+    // Гүйлгээний утгыг харуулах
+    const transactionRefHtml = `
+      <div class="ref-box">
+        <span class="ref-label">Гүйлгээний утга:</span>
+        <span class="ref-value">${escapeHtml(transactionReference)}</span>
+        <button class="copy-btn" onclick="copyRef()" title="Хуулах">📋</button>
+      </div>
+    `;
+
+    // QR текстэнд гүйлгээний утга нэмэх
+    const qrTextsWithRef = view.qrTexts.map((text) => {
+      let enhancedText = text;
+      if (!text.includes(transactionReference)) {
+        enhancedText = `${text}\n${transactionReference}`;
+      }
+      return `
+        <details class="qr-text">
+          <summary>QR код харагдахгүй бол энд дарна уу</summary>
+          <code>${escapeHtml(enhancedText)}</code>
+        </details>
+      `;
+    }).join('');
+
+    // QR зураг байхгүй бол QR текстээр харуулах
+    const qrImagesHtml = view.qrImages.length > 0
+      ? view.qrImages.map((src) => `<img class="qr" src="${escapeHtml(src)}" alt="Payment QR" />`).join('')
+      : '';
+
+    // Холбоосууд - бүх URL-д гүйлгээний утга автоматаар нэмэгдсэн
     const linkButtons = view.links.map((link) => `
       <a class="pay-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">
         <span>${escapeHtml(link.label)}</span>
       </a>
     `).join('');
-    const qrImages = view.qrImages.map((src) => `<img class="qr" src="${escapeHtml(src)}" alt="Payment QR" />`).join('');
-    const qrTexts = view.qrTexts.map((text) => `
-      <details class="qr-text">
-        <summary>QR код харагдахгүй бол энд дарна уу</summary>
-        <code>${escapeHtml(text)}</code>
-      </details>
-    `).join('');
-    
+
     const statusUrl = `/api/wire/checkout/action/${encodeURIComponent(paymentIntentId)}/status`;
     const doneUrl = `${getFrontendUrl()}/ticket-verify/${encodeURIComponent(booking._id)}`;
 
@@ -498,12 +522,20 @@ export const renderWireActionCheckout = async (req, res) => {
       h1 { margin: 18px 0 8px; font-size: 24px; }
       .amount { font-size: 32px; font-weight: 800; margin: 8px 0 18px; }
       .hint { color: #5d6f68; line-height: 1.5; margin: 0 0 18px; }
+      .ref-box { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 14px; margin: 12px 0; display: flex; justify-content: space-between; align-items: center; }
+      .ref-label { font-weight: 600; color: #166534; }
+      .ref-value { font-weight: 700; color: #047857; font-size: 16px; word-break: break-all; margin-right: 10px; }
+      .copy-btn { background: #059669; color: white; border: none; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 14px; }
+      .copy-btn:hover { background: #047857; }
       .qr-wrap { display: grid; place-items: center; gap: 12px; margin: 16px 0; }
       .qr { width: min(280px, 100%); border: 1px solid #e5ece9; border-radius: 12px; padding: 10px; background: #fff; }
       .links { display: grid; gap: 10px; margin-top: 14px; }
-      .pay-link { display: block; text-align: center; text-decoration: none; border: 1px solid #047857; background: #059669; color: white; border-radius: 10px; padding: 13px 14px; font-weight: 800; }
+      .pay-link { display: block; text-align: center; text-decoration: none; border: 1px solid #047857; background: #059669; color: white; border-radius: 10px; padding: 13px 14px; font-weight: 800; transition: background 0.2s; }
+      .pay-link:hover { background: #047857; }
+      .pay-link.secondary { background: transparent; color: #047857; border: 2px solid #047857; }
+      .pay-link.secondary:hover { background: #f0fdf4; }
       .qr-text { margin-top: 12px; border: 1px solid #e5ece9; border-radius: 10px; padding: 12px; background: #f8fafc; }
-      code { display: block; margin-top: 8px; overflow-wrap: anywhere; color: #0f172a; }
+      .qr-text code { display: block; margin-top: 8px; overflow-wrap: anywhere; color: #0f172a; font-size: 13px; }
       .empty { border: 1px solid #fecaca; background: #fef2f2; color: #991b1b; border-radius: 10px; padding: 12px; line-height: 1.45; }
       .status { margin-top: 16px; border-radius: 10px; padding: 12px; background: #f0fdf4; color: #166534; font-weight: 700; text-align: center; }
       .muted { color: #5d6f68; font-size: 13px; text-align: center; margin-top: 8px; }
@@ -514,15 +546,26 @@ export const renderWireActionCheckout = async (req, res) => {
       <div class="brand"><span class="badge">W</span><span>Wire checkout</span></div>
       <h1>Төлбөрөө үргэлжлүүлнэ үү</h1>
       <div class="amount">${escapeHtml(amountText)} ₮</div>
+      ${transactionRefHtml}
       <p class="hint">QR-г банкны апп-аараа уншуулж төлнө үү. Төлбөр ормогц энэ хуудас өөрөө шалгаад тасалбар руу шилжинэ.</p>
-      <div class="qr-wrap">${qrImages}</div>
+      <div class="qr-wrap">${qrImagesHtml}</div>
       <div class="links">${linkButtons}</div>
-      ${qrTexts}
-      ${!qrImages && !linkButtons && !qrTexts ? '<div class="empty">Төлбөрийн мэдээлэл ирсэн боловч харуулах QR эсвэл холбоос олдсонгүй. Захиалгаас дахин оролдоно уу.</div>' : ''}
+      ${qrTextsWithRef}
+      ${!view.qrImages.length && !linkButtons && !view.qrTexts.length ? '<div class="empty">Төлбөрийн мэдээлэл ирсэн боловч харуулах QR эсвэл холбоос олдсонгүй. Захиалгаас дахин оролдоно уу.</div>' : ''}
       <div id="status" class="status">Төлбөр шалгаж байна...</div>
       <div class="muted">Энэ цонхыг хаахгүй байвал төлөгдмөгц автоматаар шилжинэ.</div>
     </main>
     <script>
+      function copyRef() {
+        const ref = document.querySelector('.ref-value');
+        if (ref) {
+          navigator.clipboard.writeText(ref.textContent).then(() => {
+            const btn = document.querySelector('.copy-btn');
+            btn.textContent = '✅';
+            setTimeout(() => btn.textContent = '📋', 2000);
+          });
+        }
+      }
       const statusEl = document.getElementById('status');
       const statusUrl = ${JSON.stringify(statusUrl)};
       const doneUrl = ${JSON.stringify(doneUrl)};

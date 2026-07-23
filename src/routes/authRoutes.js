@@ -1,14 +1,17 @@
 import express from 'express';
+import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import User from '../models/User.js';
 import { protect } from '../middleware/authMiddleware.js';
+import { getJwtSecret } from '../utils/jwtSecret.js';
+import { verifySocialIdentity } from '../services/socialIdentityService.js';
 
 const router = express.Router();
 
 const createToken = (user) => jwt.sign(
   { id: user._id, email: user.email, role: user.role },
-  process.env.JWT_SECRET || 'mysecretkey',
+  getJwtSecret(),
   { expiresIn: '7d' }
 );
 
@@ -31,7 +34,7 @@ router.post('/register', async (req, res) => {
     const { name, email, password, avatarUrl, phone } = req.body;
     const normalizedEmail = String(email || '').trim().toLowerCase();
 
-    if (normalizedEmail !== 'admin@cinema.mn' && !normalizedEmail.endsWith('@gmail.com')) {
+    if (!normalizedEmail.endsWith('@gmail.com')) {
       return res.status(400).json({
         success: false,
         message: 'Зөвхөн Gmail хаягаар бүртгүүлэх боломжтой.',
@@ -48,13 +51,11 @@ router.post('/register', async (req, res) => {
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
-    const isAdmin = normalizedEmail === 'admin@cinema.mn';
-
     const user = new User({
       name,
       email: normalizedEmail,
       password: hashedPassword,
-      role: isAdmin ? 'admin' : 'user',
+      role: 'user',
       phone: phone || '',
       avatarUrl: avatarUrl || '',
     });
@@ -113,12 +114,11 @@ router.post('/login', async (req, res) => {
 
 router.post('/social-login', async (req, res) => {
   try {
-    const { name, email, avatarUrl, provider, providerId } = req.body;
+    const { provider, idToken, accessToken } = req.body;
     const normalizedProvider = String(provider || '').trim().toLowerCase();
-    const normalizedEmail = String(email || '').trim().toLowerCase();
     const isGoogleProvider = ['google', 'google.com'].includes(normalizedProvider);
 
-    if (!normalizedEmail || !providerId || !normalizedProvider) {
+    if (!normalizedProvider || (!idToken && !accessToken)) {
       return res.status(400).json({
         success: false,
         message: 'Social login мэдээлэл дутуу байна.',
@@ -132,6 +132,10 @@ router.post('/social-login', async (req, res) => {
       });
     }
 
+    const identity = await verifySocialIdentity({ idToken, accessToken });
+    const normalizedEmail = identity.email;
+    const providerId = identity.providerId;
+
     if (!normalizedEmail.endsWith('@gmail.com')) {
       return res.status(400).json({
         success: false,
@@ -139,33 +143,44 @@ router.post('/social-login', async (req, res) => {
       });
     }
 
-    let user = await User.findOne({ email: normalizedEmail });
+    let user = await User.findOne({
+      socialAccounts: { $elemMatch: { provider: 'google', providerId } },
+    });
+    if (!user) user = await User.findOne({ email: normalizedEmail });
     let isNewUser = false;
-    const fallbackPassword = `${normalizedProvider}:${providerId}`;
+    const randomPassword = () => crypto.randomBytes(32).toString('hex');
 
     if (!user) {
       isNewUser = true;
       const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(fallbackPassword, salt);
+      const hashedPassword = await bcrypt.hash(randomPassword(), salt);
       user = new User({
-        name: name || 'Хэрэглэгч',
+        name: identity.name || 'Хэрэглэгч',
         email: normalizedEmail,
         password: hashedPassword,
-        role: normalizedEmail === 'admin@cinema.mn' ? 'admin' : 'user',
-        avatarUrl: avatarUrl || '',
+        role: 'user',
+        avatarUrl: identity.avatarUrl || '',
+        socialAccounts: [{ provider: 'google', providerId }],
       });
       await user.save();
     } else {
       const update = {};
-      if (name && user.name !== name) {
-        update.name = name;
+      if (identity.name && user.name !== identity.name) {
+        update.name = identity.name;
       }
-      if (avatarUrl && user.avatarUrl !== avatarUrl) {
-        update.avatarUrl = avatarUrl;
+      if (identity.avatarUrl && user.avatarUrl !== identity.avatarUrl) {
+        update.avatarUrl = identity.avatarUrl;
       }
-      if (!user.password) {
+      if (!user.socialAccounts?.some((account) => account.provider === 'google' && account.providerId === providerId)) {
+        update.$push = { socialAccounts: { provider: 'google', providerId } };
+      }
+      const legacyFallbackPassword = `${normalizedProvider}:${providerId}`;
+      const usesLegacyFallback = user.password
+        ? await bcrypt.compare(legacyFallbackPassword, user.password)
+        : true;
+      if (usesLegacyFallback) {
         const salt = await bcrypt.genSalt(10);
-        update.password = await bcrypt.hash(fallbackPassword, salt);
+        update.password = await bcrypt.hash(randomPassword(), salt);
       }
       if (Object.keys(update).length > 0) {
         user = await User.findByIdAndUpdate(user._id, update, { new: true });
@@ -179,10 +194,12 @@ router.post('/social-login', async (req, res) => {
       isNewUser,
     });
   } catch (error) {
-    console.error('Social login error:', error);
-    return res.status(500).json({
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn('Social login rejected:', error.message);
+    }
+    return res.status(error.statusCode || 500).json({
       success: false,
-      message: 'Social login хийхэд сервер дээр алдаа гарлаа',
+      message: error.statusCode ? error.message : 'Social login хийхэд сервер дээр алдаа гарлаа',
     });
   }
 });
@@ -191,9 +208,14 @@ router.get('/me', protect, async (req, res) => {
   return res.json({ success: true, user: req.user });
 });
 
-router.get('/profile/:id', async (req, res) => {
+router.get('/profile/:id', protect, async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).select('-password');
+    const isOwner = String(req.user?._id) === String(req.params.id);
+    if (!isOwner && req.user?.role !== 'admin') {
+      return res.status(403).json({ message: 'Энэ хэрэглэгчийн профайлыг харах эрхгүй байна.' });
+    }
+
+    const user = await User.findById(req.params.id).select('-password -socialAccounts');
     if (!user) {
       return res.status(404).json({ message: 'Хэрэглэгч олдсонгүй' });
     }
@@ -219,7 +241,7 @@ router.put('/profile', protect, async (req, res) => {
       req.user._id,
       update,
       { new: true, runValidators: true }
-    ).select('-password');
+    ).select('-password -socialAccounts');
 
     if (!user) {
       return res.status(404).json({ success: false, message: 'Хэрэглэгч олдсонгүй' });
